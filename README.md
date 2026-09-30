@@ -2,7 +2,8 @@
 
 Мини-платформа для многошаговых веб-воронок: экраны описываются JSON-конфигом, конфиги версионируются с публикацией и откатом без передеплоя. Есть A/B-эксперимент с назначением варианта на сервере, собственный приём событий с дедупликацией и dashboard по уникальным сессиям.
 
-- **Публичный URL:** _TBD_
+- **Публичный URL:** https://web-production-eee72.up.railway.app (воронка), [/admin](https://web-production-eee72.up.railway.app/admin) (нужен `ADMIN_TOKEN`, передаётся отдельно), [/dashboard](https://web-production-eee72.up.railway.app/dashboard)
+- **Репозиторий:** https://github.com/ssavl/test-saveliistepura
 - Воронка: `/` → `/f/bible-plan` (параметры: `?utm_campaign=…&utm_source=…`, `?variant=A|B`, `?reset=1`)
 - Управление версиями: `/admin` · Аналитика: `/dashboard`
 
@@ -40,6 +41,16 @@ npm run traffic          # 160 синтетических сессий чере�
 Переменные окружения: `PORT` (3000), `DB_PATH`, `CONFIGS_DIR`, `SEED_CONFIG`, `WEB_DIR`, `ADMIN_TOKEN` (если задан, `/api/admin/*` требует заголовок `x-admin-token`, токен вводится на странице `/admin`), `LOG=0`.
 
 Docker: `docker build -t funnel . && docker run -p 3000:3000 -v funnel-data:/data funnel`.
+
+Деплой на Railway (сборка из Dockerfile, SQLite на volume `/data`):
+
+```bash
+railway init --name funnel-runtime
+railway add --service web --variables "ADMIN_TOKEN=…" --variables "DB_PATH=/data/funnel.sqlite" --variables "PORT=3000"
+railway link -s web && railway volume add --mount-path /data
+railway up --ci && railway domain --port 3000
+npm run traffic -- --base-url https://<domain>   # наполнить dashboard
+```
 
 ## Как это работает
 
