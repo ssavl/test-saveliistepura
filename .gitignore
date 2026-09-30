@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.expo/
+apps/server/data/*.sqlite*
+*.log
+.DS_Store
+apps/web/expo-env.d.ts

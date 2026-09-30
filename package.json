@@ -1,0 +1,20 @@
+{
+  "name": "funnel-runtime",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev:server": "npm run dev -w @funnel/server",
+    "dev:web": "npm run web -w @funnel/web",
+    "build": "npm run build -w @funnel/web",
+    "start": "npm run start -w @funnel/server",
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "traffic": "npm run traffic -w @funnel/server --"
+  }
+}

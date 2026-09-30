@@ -1,0 +1,25 @@
+{
+  "name": "@funnel/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "traffic": "tsx src/traffic.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "^8.2.0",
+    "@funnel/shared": "*",
+    "fastify": "^5.6.0",
+    "tsx": "^4.20.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "~6.0.3",
+    "vitest": "^4.0.0"
+  }
+}
