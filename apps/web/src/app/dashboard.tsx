@@ -12,6 +12,7 @@ const pct = (v: number | null | undefined) => (v == null ? '—' : `${(v * 100).
 const pp = (v: number | null | undefined) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)} п.п.`);
 const ci = (c: [number, number] | null) => (c ? `${pct(c[0])} … ${pct(c[1])}` : '—');
 const SLUG_KEY = 'funnel:dashboard:slug';
+const DEFAULT_SLUG = 'workstyle-planner';
 
 type Col<T> = { title: string; width: number; render: (row: T) => ReactNode; align?: 'left' | 'right' };
 
@@ -83,7 +84,7 @@ function Kpi({ title, value, sub, primary }: { title: string; value: string; sub
 }
 
 export default function DashboardScreen() {
-  const [slug, setSlug] = useState(() => storage.get(SLUG_KEY) ?? 'bible-plan');
+  const [slug, setSlug] = useState(() => storage.get(SLUG_KEY) ?? DEFAULT_SLUG);
   const [slugDraft, setSlugDraft] = useState(slug);
   const [version, setVersion] = useState('all');
   const [variant, setVariant] = useState('all');
@@ -246,6 +247,19 @@ export default function DashboardScreen() {
               {ab?.pValue == null ? '—' : ab.pValue < 0.001 ? '< 0.001' : ab.pValue.toFixed(3)}
               {ab?.pValue != null ? (ab.pValue < 0.05 ? ' — значимо (α = 0.05)' : ' — не значимо') : ''}
             </Text>
+          </Card>
+
+          <Card>
+            <Text style={ui.h2}>Результаты</Text>
+            <Table
+              rows={data.byResult ?? []}
+              cols={[
+                { title: 'Результат', width: 180, align: 'left', render: (g) => g.key },
+                { title: 'Увидели (сессии)', width: 130, render: (g) => g.started },
+                { title: 'Клики CTA', width: 100, render: (g) => g.ctaClicked },
+                { title: 'CTR', width: 90, render: (g) => pct(g.ctr) },
+              ]}
+            />
           </Card>
 
           <Card>

@@ -9,11 +9,12 @@ import { ADMIN_TOKEN_KEY, api, ApiError, errorMessage } from '@/lib/api';
 import { storage } from '@/lib/storage';
 
 const fmtDate = (ts: number) => new Date(ts).toLocaleString('ru-RU');
+const DEFAULT_SLUG = 'workstyle-planner';
 
 export default function AdminScreen() {
   const [token, setToken] = useState(() => storage.get(ADMIN_TOKEN_KEY) ?? '');
   const [funnels, setFunnels] = useState<{ slug: string; activeVersion: number | null }[]>([]);
-  const [slug, setSlug] = useState('');
+  const [slug, setSlug] = useState(DEFAULT_SLUG);
   const [info, setInfo] = useState<FunnelAdminDto | null>(null);
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
@@ -105,8 +106,8 @@ export default function AdminScreen() {
 
   const parseJson = (): { config: unknown; slug: string } | null => {
     try {
-      const config = JSON.parse(json) as { slug?: unknown };
-      return { config, slug: typeof config?.slug === 'string' ? config.slug : slug };
+      const config = JSON.parse(json) as { funnelId?: unknown };
+      return { config, slug: typeof config?.funnelId === 'string' ? config.funnelId : slug };
     } catch (e) {
       setIssues([{ level: 'error', message: `Невалидный JSON: ${(e as Error).message}` }]);
       return null;
@@ -141,6 +142,7 @@ export default function AdminScreen() {
           setIssues((e.body as { issues: ConfigIssue[] }).issues);
           throw new Error('Публикация отклонена: исправьте ошибки');
         }
+        if (e instanceof ApiError && e.status === 409) throw new Error(`Публикация отклонена: ${e.message}`);
         throw e;
       }
     });
@@ -208,7 +210,9 @@ export default function AdminScreen() {
                 <View style={[s.tr, s.th]}>
                   <Text style={[s.td, { width: 70 }]}>Версия</Text>
                   <Text style={[s.td, { width: 170 }]}>Создана</Text>
-                  <Text style={[s.td, { width: 220 }]}>Заметка</Text>
+                  <Text style={[s.td, { width: 90 }]}>Статус</Text>
+                  <Text style={[s.td, { width: 260 }]}>Release note</Text>
+                  <Text style={[s.td, { width: 180 }]}>Заметка</Text>
                   <Text style={[s.td, { width: 80 }]}>Сессии</Text>
                   <Text style={[s.td, { width: 330 }]} />
                 </View>
@@ -216,7 +220,9 @@ export default function AdminScreen() {
                   <View key={v.version} style={s.tr}>
                     <Text style={[s.td, { width: 70, fontWeight: '600' }]}>v{v.version}</Text>
                     <Text style={[s.td, { width: 170 }]}>{fmtDate(v.createdAt)}</Text>
-                    <Text style={[s.td, { width: 220 }]}>{v.note ?? '—'}</Text>
+                    <Text style={[s.td, { width: 90 }]}>{v.status ?? '—'}</Text>
+                    <Text style={[s.td, { width: 260 }]}>{v.releaseNote ?? '—'}</Text>
+                    <Text style={[s.td, { width: 180 }]}>{v.note ?? '—'}</Text>
                     <Text style={[s.td, { width: 80 }]}>{v.sessions}</Text>
                     <View style={[s.td, s.row, { width: 330 }]}>
                       {v.active ? (

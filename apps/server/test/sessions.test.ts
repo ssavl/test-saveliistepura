@@ -13,17 +13,19 @@ describe('A/B assignment', () => {
     }
   });
 
-  it('is deterministic per session id and roughly balanced', () => {
-    const ids = Array.from({ length: 2000 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
-    const cfg = { experiment: { key: 'k', splitB: 0.5 } } as never;
-    const b = ids.filter((id) => assignVariant(id, cfg) === 'B').length;
-    expect(b / ids.length).toBeGreaterThan(0.45);
-    expect(b / ids.length).toBeLessThan(0.55);
-    expect(ids.map((id) => assignVariant(id, cfg))).toEqual(ids.map((id) => assignVariant(id, cfg)));
+  it('is deterministic per session id and follows the weights', () => {
+    const ids = Array.from({ length: 4000 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+    const share = (cfg: unknown) => ids.filter((id) => assignVariant(id, cfg as never) === 'B').length / ids.length;
+    const w = (a: number, b: number) => ({ experiment: { id: 'x', variants: { A: { weight: a }, B: { weight: b } } } });
+    expect(share(w(50, 50))).toBeGreaterThan(0.46);
+    expect(share(w(50, 50))).toBeLessThan(0.54);
+    expect(share(w(90, 10))).toBeLessThan(0.13);
+    expect(share(w(100, 0))).toBe(0);
+    expect(ids.map((id) => assignVariant(id, v1))).toEqual(ids.map((id) => assignVariant(id, v1)));
     expect(hashUnit('x')).toBe(hashUnit('x'));
   });
 
-  it('honours the query override, and a conflicting override starts a new session', async () => {
+  it('honours the query override; a conflicting override starts a new session', async () => {
     const { start } = setup();
     const b = await start({ variantOverride: 'B' });
     expect(b.session.variant).toBe('B');
@@ -33,23 +35,49 @@ describe('A/B assignment', () => {
     expect(a.session.variant).toBe('A');
   });
 
-  it('records session_started once, server-side', async () => {
+  it('records session_started once, server-side, with experiment and UTM', async () => {
     const { db, start } = setup();
-    const s = await start({ utm: { utm_campaign: 'lent' } });
+    const s = await start({ utm: { utm_campaign: 'spring', utm_source: 'linkedin' } });
     await start({ sessionId: s.session.id });
     const rows = db.prepare("SELECT * FROM events WHERE session_id = ? AND name = 'session_started'").all(s.session.id);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ utm_campaign: 'lent', funnel_version: 1, seq: 0 });
+    expect(rows[0]).toMatchObject({
+      utm_campaign: 'spring',
+      utm_source: 'linkedin',
+      funnel_version: 1,
+      experiment_id: 'question-order-and-result-framing-v1',
+      seq: 0,
+    });
   });
 
-  it('rejects state with steps from another version', async () => {
+  it('expires after session.ttlHours of inactivity', async () => {
+    const { db, start } = setup();
+    const s = await start();
+    db.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?').run(Date.now() - 1, s.session.id);
+    const again = await start({ sessionId: s.session.id });
+    expect(again.session.id).not.toBe(s.session.id);
+    expect(again.session.expiresAt - again.session.createdAt).toBe(72 * 3_600_000);
+  });
+
+  it('rejects state with steps outside the pinned version/variant', async () => {
     const { api, start } = setup();
     const s = await start();
     const res = await api('PUT', `/api/sessions/${s.session.id}/state`, {
-      state: { answers: {}, history: ['welcome', 'not_a_step'] },
+      state: { answers: {}, history: ['intro', 'meeting_hours'] }, // meeting_hours only exists from v2
       rev: 0,
     });
     expect(res.status).toBe(400);
-    expect(v1.slug).toBe('bible-plan');
+  });
+
+  it('computes the result server-side from stored answers', async () => {
+    const { api, start } = setup();
+    const s = await start({ variantOverride: 'B' });
+    await api('PUT', `/api/sessions/${s.session.id}/state`, {
+      state: { answers: { work_mode: 'hybrid', async_maturity: 'low', office_days: 2 }, history: ['intro'] },
+      rev: 0,
+    });
+    const r = await api('GET', `/api/sessions/${s.session.id}/result`);
+    expect(r.body.result).toMatchObject({ id: 'hybrid_structured', title: 'Your hybrid model needs clearer rules' });
+    expect(r.body.result.recommendations).toHaveLength(3);
   });
 });

@@ -1,177 +1,216 @@
 // Pure funnel engine shared by client, server and the traffic generator.
+// Model: each variant has a linear stepSequence; a step with `visibleWhen` is shown only when its condition
+// holds for answers given earlier in that sequence (this is the branching mechanism).
 import {
   type AnswerValue,
   type Answers,
   type Condition,
   type FunnelConfig,
   FunnelConfigSchema,
+  type InputStep,
+  type LeafCondition,
+  type Result,
+  ResultSchema,
   type Step,
   StepSchema,
   type Variant,
 } from './config';
 
 export interface ResolvedFunnel {
-  slug: string;
-  title: string;
+  funnelId: string;
+  version: number;
+  experimentId: string;
   variant: Variant;
-  start: string;
-  steps: Record<string, Step>;
-  order: string[]; // BFS order from start, used for stable display
+  locale: string;
+  sequence: string[];
+  steps: Record<string, Step>; // only steps of this variant's sequence, overrides applied
+  results: Record<string, Result>; // overrides applied
+  resultRules: FunnelConfig['resultRules'];
+  defaultResultId: string;
+  progressExclude: string[];
+  events: Record<string, string[]>; // allowed event name -> allowed property names
 }
 
-/** Applies a variant override: patches step fields, removes steps (rewiring transitions), changes start. */
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Objects merge recursively; arrays and scalars are replaced. */
+export function deepMerge<T>(base: T, patch: unknown): T {
+  if (!isObj(base) || !isObj(patch)) return (patch === undefined ? base : patch) as T;
+  const out: Obj = { ...base };
+  for (const [k, v] of Object.entries(patch)) out[k] = deepMerge(out[k], v);
+  return out as T;
+}
+
 export function applyVariant(config: FunnelConfig, variant: Variant): ResolvedFunnel {
-  const override = config.variants[variant];
+  const def = config.experiment.variants[variant];
   const steps: Record<string, Step> = {};
-  for (const step of config.steps) {
-    const patch = override?.steps[step.id];
-    steps[step.id] = patch ? StepSchema.parse({ ...step, ...patch, id: step.id, type: step.type }) : step;
+  for (const id of def.stepSequence) {
+    const base = config.steps[id];
+    if (!base) continue;
+    const patch = def.stepOverrides[id];
+    steps[id] = patch ? StepSchema.parse(deepMerge(base, { ...patch, id, type: base.type })) : base;
   }
-
-  const removed = new Set(override?.removeSteps ?? []);
-  // A transition into a removed step is redirected to that step's default successor (transitively).
-  const redirect = (to: string, seen = new Set<string>()): string => {
-    if (!removed.has(to) || seen.has(to)) return to;
-    seen.add(to);
-    const def = steps[to]?.next.find((t) => !t.when);
-    if (!def) throw new Error(`Removed step "${to}" has no default transition to rewire`);
-    return redirect(def.to, seen);
+  const results: Record<string, Result> = {};
+  for (const [id, r] of Object.entries(config.results)) {
+    const patch = def.resultOverrides[id];
+    results[id] = patch ? ResultSchema.parse(deepMerge(r, { ...patch, id })) : r;
+  }
+  return {
+    funnelId: config.funnelId,
+    version: config.version,
+    experimentId: config.experiment.id,
+    variant,
+    locale: config.locale,
+    sequence: def.stepSequence.filter((id) => steps[id]),
+    steps,
+    results,
+    resultRules: config.resultRules,
+    defaultResultId: config.defaultResultId,
+    progressExclude: config.progress.excludeTypes,
+    events: Object.fromEntries(config.events.allowed.map((e) => [e.name, e.properties])),
   };
-  const start = redirect(override?.start ?? config.start);
-  const rewired: Record<string, Step> = {};
-  for (const [id, s] of Object.entries(steps)) {
-    if (removed.has(id)) continue;
-    rewired[id] = s.next.some((t) => removed.has(t.to))
-      ? { ...s, next: s.next.map((t) => ({ ...t, to: redirect(t.to) })) }
-      : s;
-  }
-
-  return { slug: config.slug, title: config.title, variant, start, steps: rewired, order: bfsOrder(rewired, start) };
 }
 
-function bfsOrder(steps: Record<string, Step>, start: string): string[] {
-  const order: string[] = [];
-  const queue = [start];
-  const seen = new Set(queue);
-  while (queue.length) {
-    const id = queue.shift()!;
-    if (!steps[id]) continue;
-    order.push(id);
-    for (const t of steps[id].next) {
-      if (!seen.has(t.to)) {
-        seen.add(t.to);
-        queue.push(t.to);
-      }
-    }
+export const isInputStep = (step: Step): step is InputStep => 'input' in step;
+export const answerKey = (step: Step): string | null => (isInputStep(step) ? step.input.name : null);
+
+const isMissing = (v: AnswerValue | undefined): v is null | undefined =>
+  v === undefined || v === null || (Array.isArray(v) && v.length === 0);
+
+function evalLeaf(c: LeafCondition, answers: Answers): boolean {
+  const a = answers[c.answer];
+  if (c.operator === 'exists') return (c.value === false) === isMissing(a);
+  if (isMissing(a)) return false;
+  const list = Array.isArray(c.value) ? (c.value as unknown[]) : [c.value];
+  const values: unknown[] = Array.isArray(a) ? a : [a];
+  switch (c.operator) {
+    case 'eq':
+      return !Array.isArray(a) && a === c.value;
+    case 'neq':
+      return !Array.isArray(a) && a !== c.value;
+    case 'in':
+      return values.some((v) => list.includes(v));
+    case 'nin':
+      return !values.some((v) => list.includes(v));
+    case 'contains':
+      return list.some((v) => values.includes(v));
+    case 'gt':
+      return typeof a === 'number' && a > Number(c.value);
+    case 'gte':
+      return typeof a === 'number' && a >= Number(c.value);
+    case 'lt':
+      return typeof a === 'number' && a < Number(c.value);
+    case 'lte':
+      return typeof a === 'number' && a <= Number(c.value);
   }
-  return order;
 }
 
+/** Missing answers make leaf conditions false (except `exists: false`). */
 export function evalCondition(cond: Condition, answers: Answers): boolean {
-  const v = answers[cond.stepId];
-  if (v === undefined || v === null) return false;
-  if (cond.in) {
-    const values = Array.isArray(v) ? v : [String(v)];
-    if (!values.some((x) => cond.in!.includes(x))) return false;
-  }
-  if (cond.gte !== undefined && !(typeof v === 'number' && v >= cond.gte)) return false;
-  if (cond.lt !== undefined && !(typeof v === 'number' && v < cond.lt)) return false;
-  return true;
-}
-
-/** Next step id after `stepId` given answers, or null for terminal (result) steps. */
-export function nextStep(funnel: ResolvedFunnel, stepId: string, answers: Answers): string | null {
-  const step = funnel.steps[stepId];
-  if (!step) return null;
-  const t = step.next.find((tr) => !tr.when || evalCondition(tr.when, answers));
-  return t ? t.to : null;
+  if ('all' in cond) return cond.all.every((c) => evalCondition(c, answers));
+  if ('any' in cond) return cond.any.some((c) => evalCondition(c, answers));
+  if ('not' in cond) return !evalCondition(cond.not, answers);
+  return evalLeaf(cond, answers);
 }
 
 /**
- * Path the user will walk given current answers. Unanswered conditions fall to defaults,
- * so progress only counts steps actually reachable for this user.
+ * Walks the sequence and returns the visible steps plus the answers that still count.
+ * Answers of steps hidden by a later change (e.g. office_days after switching to remote) are dropped,
+ * so stale answers never affect visibility or the result.
  */
-export function predictPath(funnel: ResolvedFunnel, answers: Answers, from = funnel.start): string[] {
-  const path: string[] = [];
-  const seen = new Set<string>();
-  let cur: string | null = from;
-  while (cur && funnel.steps[cur] && !seen.has(cur)) {
-    seen.add(cur);
-    path.push(cur);
-    cur = nextStep(funnel, cur, answers);
+export function walk(funnel: ResolvedFunnel, answers: Answers): { visible: string[]; effective: Answers } {
+  const effective: Answers = {};
+  const visible: string[] = [];
+  for (const id of funnel.sequence) {
+    const step = funnel.steps[id];
+    if (step.visibleWhen && !evalCondition(step.visibleWhen, effective)) continue;
+    visible.push(id);
+    const key = answerKey(step);
+    if (key && answers[key] !== undefined) effective[key] = answers[key];
   }
-  return path;
+  return { visible, effective };
 }
 
-/** Progress for the current step: position within [visited history + predicted remainder]. */
-export function progress(funnel: ResolvedFunnel, answers: Answers, history: string[]) {
-  const current = history[history.length - 1] ?? funnel.start;
-  const remainder = predictPath(funnel, answers, current).slice(1);
-  const total = history.length + remainder.length;
-  return { index: history.length, total, ratio: total ? history.length / total : 0 };
+export const visibleSteps = (funnel: ResolvedFunnel, answers: Answers) => walk(funnel, answers).visible;
+
+export function firstStep(funnel: ResolvedFunnel, answers: Answers = {}): string {
+  return visibleSteps(funnel, answers)[0];
+}
+
+/** Next visible step after `stepId` in the sequence, or null at the end. */
+export function nextStep(funnel: ResolvedFunnel, stepId: string, answers: Answers): string | null {
+  const visible = visibleSteps(funnel, answers);
+  const pos = funnel.sequence.indexOf(stepId);
+  return visible.find((id) => funnel.sequence.indexOf(id) > pos) ?? null;
+}
+
+/** Position of the step in the visible sequence (all types), 1-based — used for step_viewed. */
+export function stepPosition(funnel: ResolvedFunnel, stepId: string, answers: Answers) {
+  const visible = visibleSteps(funnel, answers);
+  return { index: visible.indexOf(stepId) + 1, count: visible.length };
+}
+
+/**
+ * Progress bar: only visible steps, excluding `progress.excludeTypes` (info/result).
+ * `index` is the 1-based number of the current question (0 on info screens before the first question).
+ */
+export function progress(funnel: ResolvedFunnel, answers: Answers, stepId: string) {
+  const visible = visibleSteps(funnel, answers);
+  const counted = visible.filter((id) => !funnel.progressExclude.includes(funnel.steps[id].type));
+  const pos = funnel.sequence.indexOf(stepId);
+  const before = counted.filter((id) => funnel.sequence.indexOf(id) < pos).length;
+  const isCounted = counted.includes(stepId);
+  const total = counted.length;
+  const done = funnel.steps[stepId]?.type === 'result' ? total : before;
+  return { index: isCounted ? before + 1 : before, total, ratio: total ? done / total : 0, counted: isCounted };
 }
 
 export type ValidationResult = { ok: true } | { ok: false; error: string };
 
 export function validateAnswer(step: Step, value: AnswerValue | undefined): ValidationResult {
+  if (!isInputStep(step)) return { ok: true };
+  const { messages, required } = step.validation;
+  const fail = (key: string, fallback: string): ValidationResult => ({ ok: false, error: messages[key] ?? fallback });
+  if (isMissing(value)) {
+    if (!required) return { ok: true };
+    if (step.type === 'multi-select') return fail('minSelections', messages.required ?? 'Choose at least one option.');
+    return fail('required', 'This field is required.');
+  }
   switch (step.type) {
-    case 'info':
-    case 'result':
-      return { ok: true };
-    case 'single':
-      return typeof value === 'string' && step.options.some((o) => o.value === value)
+    case 'single-select':
+      return typeof value === 'string' && step.input.options.some((o) => o.value === value)
         ? { ok: true }
-        : { ok: false, error: 'Выберите один вариант' };
-    case 'multi': {
-      if (!Array.isArray(value)) return { ok: false, error: 'Выберите варианты' };
-      if (new Set(value).size !== value.length) return { ok: false, error: 'Повторяющиеся значения' };
-      if (!value.every((v) => step.options.some((o) => o.value === v)))
-        return { ok: false, error: 'Неизвестный вариант' };
-      if (value.length < step.minSelected)
-        return { ok: false, error: `Выберите минимум ${step.minSelected}` };
-      if (step.maxSelected && value.length > step.maxSelected)
-        return { ok: false, error: `Можно выбрать не больше ${step.maxSelected}` };
+        : fail('required', 'Choose one option.');
+    case 'multi-select': {
+      if (!Array.isArray(value) || new Set(value).size !== value.length) return fail('invalid', 'Invalid selection.');
+      if (!value.every((v) => step.input.options.some((o) => o.value === v))) return fail('invalid', 'Invalid selection.');
+      const { minSelections = required ? 1 : 0, maxSelections } = step.validation;
+      if (value.length < minSelections) return fail('minSelections', `Choose at least ${minSelections}.`);
+      if (maxSelections !== undefined && value.length > maxSelections)
+        return fail('maxSelections', `Choose no more than ${maxSelections}.`);
       return { ok: true };
     }
-    case 'number':
-      if (typeof value !== 'number' || !Number.isFinite(value)) return { ok: false, error: 'Введите число' };
-      if (value < step.min || value > step.max)
-        return { ok: false, error: `Введите число от ${step.min} до ${step.max}` };
+    case 'number': {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return fail('required', 'Enter a number.');
+      const { min, max, step: inc } = step.input;
+      if (min !== undefined && value < min) return fail('min', `Enter a value of at least ${min}.`);
+      if (max !== undefined && value > max) return fail('max', `Enter a value up to ${max}.`);
+      if (inc !== undefined && Math.abs((value - (min ?? 0)) / inc - Math.round((value - (min ?? 0)) / inc)) > 1e-9)
+        return fail('step', inc === 1 ? 'Enter a whole number.' : `Use steps of ${inc}.`);
       return { ok: true };
+    }
   }
 }
 
-/** Analytics-safe label for a number answer, e.g. "10-20". */
-export function bucketNumber(edges: number[], value: number): string {
-  const sorted = [...edges].sort((a, b) => a - b);
-  if (!sorted.length) return 'any';
-  if (value < sorted[0]) return `<${sorted[0]}`;
-  for (let i = 1; i < sorted.length; i++) if (value < sorted[i]) return `${sorted[i - 1]}-${sorted[i]}`;
-  return `>=${sorted[sorted.length - 1]}`;
-}
+/** answer_submitted carries the kind of answer only — raw answers stay in the session (privacy.storeRawAnswers=false). */
+export const answerKind = (step: Step): string => step.type;
 
-/** Props for answer_submitted: option ids and buckets only, never raw free input. */
-export function answerProps(step: Step, value: AnswerValue): Record<string, unknown> {
-  if (step.type === 'number' && typeof value === 'number') return { bucket: bucketNumber(step.buckets, value) };
-  if (step.type === 'single') return { option: value };
-  if (step.type === 'multi') return { options: value };
-  return {};
-}
-
-/** Substitutes {{value:stepId}} and {{label:stepId}} in result texts. */
-export function renderTemplate(text: string, funnel: ResolvedFunnel, answers: Answers): string {
-  return text.replace(/\{\{(value|label):([a-z0-9_]+)\}\}/g, (_, kind: string, stepId: string) => {
-    const v = answers[stepId];
-    if (v === undefined || v === null) return '';
-    const step = funnel.steps[stepId];
-    if (kind === 'label' && step && (step.type === 'single' || step.type === 'multi')) {
-      const labels = (Array.isArray(v) ? v : [String(v)]).map(
-        (x) => step.options.find((o) => o.value === x)?.label ?? x,
-      );
-      return labels.join(', ').toLowerCase();
-    }
-    return Array.isArray(v) ? v.join(', ') : String(v);
-  });
+/** First matching result rule over effective answers, else defaultResultId. */
+export function resolveResult(funnel: ResolvedFunnel, answers: Answers): Result {
+  const { effective } = walk(funnel, answers);
+  const rule = funnel.resultRules.find((r) => evalCondition(r.when, effective));
+  return funnel.results[rule?.resultId ?? funnel.defaultResultId];
 }
 
 export interface ConfigIssue {
@@ -180,7 +219,25 @@ export interface ConfigIssue {
   message: string;
 }
 
-/** Parses and checks the step graph for both variants. Publishing is blocked on errors. */
+function conditionAnswers(c: Condition, out: string[] = []): string[] {
+  if ('all' in c) c.all.forEach((x) => conditionAnswers(x, out));
+  else if ('any' in c) c.any.forEach((x) => conditionAnswers(x, out));
+  else if ('not' in c) conditionAnswers(c.not, out);
+  else out.push(c.answer);
+  return out;
+}
+
+export const CORE_EVENT_NAMES = [
+  'session_started',
+  'step_viewed',
+  'answer_submitted',
+  'step_completed',
+  'back_clicked',
+  'result_viewed',
+  'cta_clicked',
+];
+
+/** Schema + semantic checks for both variants. Publishing is blocked on errors. */
 export function validateConfig(raw: unknown): { config?: FunnelConfig; issues: ConfigIssue[] } {
   const parsed = FunnelConfigSchema.safeParse(raw);
   if (!parsed.success) {
@@ -190,64 +247,69 @@ export function validateConfig(raw: unknown): { config?: FunnelConfig; issues: C
   }
   const config = parsed.data;
   const issues: ConfigIssue[] = [];
-  const ids = new Set<string>();
-  for (const s of config.steps) {
-    if (ids.has(s.id)) issues.push({ level: 'error', message: `Duplicate step id "${s.id}"` });
-    ids.add(s.id);
+  const err = (message: string, variant?: Variant) => issues.push({ level: 'error', variant, message });
+  const warn = (message: string, variant?: Variant) => issues.push({ level: 'warning', variant, message });
+
+  for (const [key, step] of Object.entries(config.steps)) {
+    if (step.id !== key) err(`steps.${key}.id is "${step.id}"`);
+    if (step.type === 'multi-select') {
+      const { minSelections = 0, maxSelections } = step.validation;
+      if (maxSelections !== undefined && (maxSelections < minSelections || maxSelections > step.input.options.length))
+        err(`${key}: invalid min/maxSelections`);
+    }
+    if (step.type === 'number' && step.input.min !== undefined && step.input.max !== undefined && step.input.min > step.input.max)
+      err(`${key}: min > max`);
   }
+  for (const [key, r] of Object.entries(config.results)) if (r.id !== key) err(`results.${key}.id is "${r.id}"`);
+  for (const id of [...config.resultRules.map((r) => r.resultId), config.defaultResultId]) {
+    if (!config.results[id]) err(`Unknown result "${id}"`);
+  }
+  const eventNames = config.events.allowed.map((e) => e.name);
+  for (const name of CORE_EVENT_NAMES) if (!eventNames.includes(name)) warn(`Core event "${name}" is not allowed`);
+  const weights = config.experiment.variants.A.weight + config.experiment.variants.B.weight;
+  if (weights <= 0) err('Variant weights must sum to a positive number');
   let branching = false;
 
   for (const variant of ['A', 'B'] as const) {
-    const ov = config.variants[variant];
-    for (const id of [...Object.keys(ov?.steps ?? {}), ...(ov?.removeSteps ?? [])]) {
-      if (!ids.has(id)) issues.push({ level: 'error', variant, message: `Override for unknown step "${id}"` });
+    const def = config.experiment.variants[variant];
+    const seen = new Set<string>();
+    const names = new Map<string, number>(); // answer name -> position in sequence
+    def.stepSequence.forEach((id, pos) => {
+      const step = config.steps[id];
+      if (!step) return err(`Unknown step "${id}" in stepSequence`, variant);
+      if (seen.has(id)) err(`Step "${id}" appears twice`, variant);
+      seen.add(id);
+      if (step.visibleWhen) {
+        branching = true;
+        for (const a of conditionAnswers(step.visibleWhen)) {
+          const at = names.get(a);
+          if (at === undefined) err(`${id}.visibleWhen depends on "${a}", which is not asked earlier`, variant);
+        }
+      }
+      const key = answerKey(step);
+      if (key) {
+        if (names.has(key)) err(`Duplicate answer name "${key}"`, variant);
+        names.set(key, pos);
+      }
+    });
+    const results = def.stepSequence.filter((id) => config.steps[id]?.type === 'result');
+    if (results.length !== 1) err(`Sequence must contain exactly one result step (found ${results.length})`, variant);
+    else if (def.stepSequence.at(-1) !== results[0]) err('Result step must be last', variant);
+    for (const id of Object.keys(def.stepOverrides)) {
+      if (!seen.has(id)) warn(`stepOverrides.${id} is not in this variant's sequence`, variant);
     }
-    let funnel: ResolvedFunnel;
+    for (const id of Object.keys(def.resultOverrides)) if (!config.results[id]) err(`resultOverrides.${id}: unknown result`, variant);
+    for (const rule of config.resultRules) {
+      for (const a of conditionAnswers(rule.when)) {
+        if (!names.has(a)) warn(`Result rule "${rule.resultId}" uses "${a}", which this variant never asks`, variant);
+      }
+    }
     try {
-      funnel = applyVariant(config, variant);
+      applyVariant(config, variant);
     } catch (e) {
-      issues.push({ level: 'error', variant, message: (e as Error).message });
-      continue;
-    }
-    if (!funnel.steps[funnel.start]) {
-      issues.push({ level: 'error', variant, message: `Start step "${funnel.start}" not found` });
-      continue;
-    }
-    for (const step of Object.values(funnel.steps)) {
-      for (const t of step.next) {
-        if (!funnel.steps[t.to])
-          issues.push({ level: 'error', variant, message: `${step.id} -> unknown step "${t.to}"` });
-        if (t.when && !ids.has(t.when.stepId))
-          issues.push({ level: 'error', variant, message: `${step.id}: condition on unknown step` });
-      }
-      if (step.type === 'result') {
-        if (step.next.length) issues.push({ level: 'error', variant, message: `Result "${step.id}" has transitions` });
-      } else if (!step.next.some((t) => !t.when)) {
-        issues.push({ level: 'error', variant, message: `Step "${step.id}" has no default transition` });
-      }
-      if (step.next.some((t) => t.when)) branching = true;
-    }
-    if (hasCycle(funnel)) issues.push({ level: 'error', variant, message: 'Step graph has a cycle' });
-    const reachable = new Set(funnel.order);
-    if (!funnel.order.some((id) => funnel.steps[id].type === 'result'))
-      issues.push({ level: 'error', variant, message: 'No reachable result step' });
-    for (const id of Object.keys(funnel.steps)) {
-      if (!reachable.has(id)) issues.push({ level: 'warning', variant, message: `Step "${id}" is unreachable` });
+      err(`Overrides produce an invalid step/result: ${(e as Error).message}`, variant);
     }
   }
-  if (!branching) issues.push({ level: 'error', message: 'Config must contain at least one conditional branch' });
+  if (!branching) warn('No conditional step (visibleWhen) — the funnel has no branching');
   return { config, issues };
-}
-
-function hasCycle(funnel: ResolvedFunnel): boolean {
-  const state = new Map<string, 1 | 2>();
-  const visit = (id: string): boolean => {
-    if (state.get(id) === 1) return true;
-    if (state.get(id) === 2 || !funnel.steps[id]) return false;
-    state.set(id, 1);
-    for (const t of funnel.steps[id].next) if (visit(t.to)) return true;
-    state.set(id, 2);
-    return false;
-  };
-  return visit(funnel.start);
 }

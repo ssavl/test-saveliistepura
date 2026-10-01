@@ -1,5 +1,13 @@
 // Funnel versions are immutable rows; publish/rollback only move the `funnel_active` pointer.
-import { type ConfigIssue, type FunnelAdminDto, type FunnelConfig, validateConfig } from '@funnel/shared';
+import {
+  applyVariant,
+  type ConfigIssue,
+  type FunnelAdminDto,
+  type FunnelConfig,
+  type ResolvedFunnel,
+  type Variant,
+  validateConfig,
+} from '@funnel/shared';
 import { type Db, tx } from './db';
 
 export class HttpError extends Error {
@@ -37,6 +45,22 @@ export function getVersionConfig(db: Db, slug: string, version: number): FunnelC
   return config;
 }
 
+const funnelCache = new WeakMap<Db, Map<string, ResolvedFunnel>>();
+
+/** Variant-resolved funnel of a pinned version (cached; versions are immutable). */
+export function getFunnel(db: Db, slug: string, version: number, variant: Variant): ResolvedFunnel | null {
+  let cache = funnelCache.get(db);
+  if (!cache) funnelCache.set(db, (cache = new Map()));
+  const key = `${slug}@${version}/${variant}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const config = getVersionConfig(db, slug, version);
+  if (!config) return null;
+  const funnel = applyVariant(config, variant);
+  cache.set(key, funnel);
+  return funnel;
+}
+
 export function publishVersion(
   db: Db,
   slug: string,
@@ -47,17 +71,21 @@ export function publishVersion(
   if (!config || issues.some((i) => i.level === 'error')) {
     throw new HttpError(400, 'Invalid config', { issues });
   }
-  if (config.slug !== slug) {
-    throw new HttpError(400, 'Slug mismatch', {
-      issues: [{ level: 'error', message: `config.slug "${config.slug}" != "${slug}"` }],
+  if (config.funnelId !== slug) {
+    throw new HttpError(400, 'Funnel id mismatch', {
+      issues: [{ level: 'error', message: `config.funnelId "${config.funnelId}" != "${slug}"` }],
     });
   }
+  // The version number is the one in the file, so events and the file always agree. Versions are immutable:
+  // re-publishing an existing number is refused — use rollback/activate to switch to it.
+  const version = config.version;
   return tx(db, () => {
     const now = Date.now();
-    const { v } = db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM funnel_versions WHERE slug = ?').get(slug) as {
-      v: number;
-    };
-    const version = v + 1;
+    if (db.prepare('SELECT 1 FROM funnel_versions WHERE slug = ? AND version = ?').get(slug, version)) {
+      throw new HttpError(409, `Version ${version} is already published`, {
+        error: `Version ${version} is already published; activate it with rollback instead`,
+      });
+    }
     const from = getActiveVersion(db, slug);
     db.prepare('INSERT INTO funnel_versions (slug, version, config_json, note, created_at) VALUES (?, ?, ?, ?, ?)').run(
       slug,
@@ -115,13 +143,17 @@ export function listFunnels(db: Db) {
 export function funnelAdmin(db: Db, slug: string): FunnelAdminDto {
   const active = getActiveVersion(db, slug);
   if (active === null) throw new HttpError(404, `Funnel "${slug}" not found`);
-  const versions = db
+  const rows = db
     .prepare(
-      `SELECT v.version, v.created_at AS createdAt, v.note,
+      `SELECT v.version, v.created_at AS createdAt, v.note, v.config_json,
               (SELECT COUNT(*) FROM sessions s WHERE s.slug = v.slug AND s.version = v.version) AS sessions
        FROM funnel_versions v WHERE v.slug = ? ORDER BY v.version DESC`,
     )
-    .all(slug) as { version: number; createdAt: number; note: string | null; sessions: number }[];
+    .all(slug) as { version: number; createdAt: number; note: string | null; config_json: string; sessions: number }[];
+  const versions = rows.map(({ config_json, ...v }) => {
+    const raw = JSON.parse(config_json) as { status?: string; releaseNote?: string };
+    return { ...v, status: raw.status ?? null, releaseNote: raw.releaseNote ?? null };
+  });
   const log = db
     .prepare(
       `SELECT action, from_version AS fromVersion, to_version AS toVersion, at
@@ -130,6 +162,7 @@ export function funnelAdmin(db: Db, slug: string): FunnelAdminDto {
     .all(slug) as unknown as FunnelAdminDto['log'];
   return {
     slug,
+    title: getVersionConfig(db, slug, active)?.title ?? slug,
     activeVersion: active,
     versions: versions.map((v) => ({ ...v, active: v.version === active })),
     log,

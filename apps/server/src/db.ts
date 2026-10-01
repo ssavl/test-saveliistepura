@@ -57,6 +57,15 @@ const MIGRATIONS: string[] = [
   CREATE INDEX events_session ON events (session_id, seq);
   CREATE INDEX events_slug_name ON events (slug, name, step_id);
   `,
+  // v2: official config format (experiment id, session TTL, flat UTM fields).
+  `
+  ALTER TABLE sessions ADD COLUMN experiment_id TEXT NOT NULL DEFAULT '';
+  ALTER TABLE sessions ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE events ADD COLUMN experiment_id TEXT NOT NULL DEFAULT '';
+  ALTER TABLE events ADD COLUMN utm_source TEXT;
+  ALTER TABLE events ADD COLUMN utm_medium TEXT;
+  CREATE INDEX events_slug_version ON events (slug, funnel_version, variant);
+  `,
 ];
 
 export function openDb(path: string): Db {

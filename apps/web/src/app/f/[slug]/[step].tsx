@@ -1,14 +1,13 @@
 import type { AnswerValue } from '@funnel/shared';
 import { progress } from '@funnel/shared';
-import { type Href, router, useFocusEffect, useLocalSearchParams, useNavigation } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback } from 'react';
-import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '@/components/theme';
 import { ErrorState, Loading, ProgressBar, Screen } from '@/components/ui';
 import { stepHref, useFunnel } from '@/funnel/FunnelContext';
 import { StepView } from '@/funnel/StepView';
-import { flushNow, track } from '@/lib/tracker';
 
 export default function StepScreen() {
   const { step: stepParam } = useLocalSearchParams<{ step: string }>();
@@ -40,7 +39,7 @@ export default function StepScreen() {
   if (!ready || !d || !step || !d.history.includes(stepParam)) return <Loading />;
 
   const pos = d.history.indexOf(stepParam);
-  const p = progress(d.funnel, d.answers, d.history.slice(0, pos + 1));
+  const p = progress(d.funnel, d.answers, stepParam);
 
   const goBack = () => {
     const to = f.backFrom(stepParam);
@@ -58,38 +57,29 @@ export default function StepScreen() {
     return undefined;
   };
 
-  const onCta = async (url: string) => {
-    track('cta_clicked', stepParam, { url });
-    await Promise.race([flushNow(), new Promise((r) => setTimeout(r, 2000))]);
-    if (url.startsWith('/')) router.push(url as Href);
-    else if (Platform.OS === 'web' && typeof window !== 'undefined') window.location.assign(url);
-    else await Linking.openURL(url);
-  };
-
   return (
     <Screen>
       <View style={s.header}>
         {pos > 0 ? (
           <Pressable accessibilityRole="button" onPress={goBack} hitSlop={10} style={s.back}>
-            <Text style={s.backText}>‹ Назад</Text>
+            <Text style={s.backText}>‹ Back</Text>
           </Pressable>
         ) : (
           <View style={s.back} />
         )}
-        <Text style={s.counter}>
-          {p.index} / {p.total}
-        </Text>
+        {p.counted ? (
+          <Text style={s.counter}>
+            Question {p.index} of {p.total}
+          </Text>
+        ) : null}
       </View>
       <ProgressBar ratio={p.ratio} />
       <View style={{ height: 12 }} />
       <StepView
         key={`${stepParam}:${pos}`}
         step={step}
-        funnel={d.funnel}
         answers={d.answers}
         onSubmit={onSubmit}
-        onCta={onCta}
-        onSecondary={(a) => track(a.event, stepParam, { label: a.label })}
       />
     </Screen>
   );

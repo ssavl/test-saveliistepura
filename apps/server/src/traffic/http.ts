@@ -12,13 +12,20 @@ export class Api {
   requests = 0;
   constructor(readonly baseUrl: string, private readonly timeoutMs = 15_000) {}
 
-  async request<T = unknown>(method: string, path: string, body?: unknown): Promise<HttpResponse<T>> {
+  async request<T = unknown>(
+    method: string,
+    path: string,
+    body?: unknown,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<HttpResponse<T>> {
     this.requests++;
     let res: Response;
+    const headers: Record<string, string> = { ...extraHeaders };
+    if (body !== undefined) headers['content-type'] = 'application/json';
     try {
       res = await fetch(this.baseUrl.replace(/\/+$/, '') + path, {
         method,
-        headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
@@ -36,11 +43,11 @@ export class Api {
     return { status: res.status, ok: res.ok, body: parsed as T };
   }
 
-  get<T = unknown>(path: string) {
-    return this.request<T>('GET', path);
+  get<T = unknown>(path: string, headers?: Record<string, string>) {
+    return this.request<T>('GET', path, undefined, headers);
   }
-  post<T = unknown>(path: string, body: unknown) {
-    return this.request<T>('POST', path, body);
+  post<T = unknown>(path: string, body: unknown, headers?: Record<string, string>) {
+    return this.request<T>('POST', path, body, headers);
   }
   put<T = unknown>(path: string, body: unknown) {
     return this.request<T>('PUT', path, body);

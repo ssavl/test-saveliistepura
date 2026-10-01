@@ -1,4 +1,6 @@
-// Funnel config schema: the frontend renders screens only from this JSON.
+// Funnel config schema (schemaVersion 1.0, as provided with the assignment).
+// The frontend renders screens only from this JSON. Unknown fields are kept (looseObject) so newer
+// configs with extra metadata still validate.
 import { z } from 'zod';
 
 export const VariantSchema = z.enum(['A', 'B']);
@@ -6,101 +8,165 @@ export type Variant = z.infer<typeof VariantSchema>;
 
 export const EventNameRe = /^[a-z][a-z0-9_]{2,47}$/;
 
-// Condition over previous answers. All present operators must hold.
-// Missing answer => condition is false (so unanswered branches fall to the default transition).
-export const ConditionSchema = z.object({
-  stepId: z.string(),
-  in: z.array(z.string()).optional(), // single: value in list; multi: any selected value in list
-  gte: z.number().optional(),
-  lt: z.number().optional(),
+// ---- Conditions (visibleWhen, resultRules) ----
+
+export const OPERATORS = ['eq', 'neq', 'in', 'nin', 'contains', 'gt', 'gte', 'lt', 'lte', 'exists'] as const;
+
+export const LeafConditionSchema = z.object({
+  answer: z.string(),
+  operator: z.enum(OPERATORS),
+  value: z.unknown().optional(),
 });
-export type Condition = z.infer<typeof ConditionSchema>;
+export type LeafCondition = z.infer<typeof LeafConditionSchema>;
 
-// Transitions are evaluated in order; the first matching one wins. A transition without `when` is the default.
-export const TransitionSchema = z.object({ when: ConditionSchema.optional(), to: z.string() });
-export type Transition = z.infer<typeof TransitionSchema>;
+export type Condition = LeafCondition | { all: Condition[] } | { any: Condition[] } | { not: Condition };
 
-export const OptionSchema = z.object({ value: z.string(), label: z.string() });
+export const ConditionSchema: z.ZodType<Condition> = z.lazy(() =>
+  z.union([
+    LeafConditionSchema,
+    z.object({ all: z.array(ConditionSchema).min(1) }),
+    z.object({ any: z.array(ConditionSchema).min(1) }),
+    z.object({ not: ConditionSchema }),
+  ]),
+);
 
-// Extra button that emits a config-defined event (new events ship without a frontend deploy).
-export const SecondaryActionSchema = z.object({
-  label: z.string(),
-  event: z.string().regex(EventNameRe),
-  text: z.string().optional(), // revealed after click
+// ---- Steps ----
+
+const ContentSchema = z.looseObject({
+  eyebrow: z.string().optional(),
+  title: z.string().optional(),
+  body: z.string().optional(),
+  helperText: z.string().optional(),
+  primaryActionLabel: z.string().optional(),
+  loadingTitle: z.string().optional(),
+  errorTitle: z.string().optional(),
+  retryLabel: z.string().optional(),
 });
 
-const base = {
+const OptionSchema = z.object({ value: z.string(), label: z.string() });
+
+const ValidationSchema = z.looseObject({
+  required: z.boolean().default(true),
+  minSelections: z.number().int().min(0).optional(),
+  maxSelections: z.number().int().min(1).optional(),
+  messages: z.record(z.string(), z.string()).default({}),
+});
+
+const stepBase = {
   id: z.string().regex(/^[a-z][a-z0-9_]*$/),
-  title: z.string(),
-  subtitle: z.string().optional(),
-  next: z.array(TransitionSchema).default([]),
+  content: ContentSchema.default({}),
+  visibleWhen: ConditionSchema.optional(),
 };
 
 export const StepSchema = z.discriminatedUnion('type', [
-  z.object({ ...base, type: z.literal('single'), options: z.array(OptionSchema).min(2) }),
-  z.object({
-    ...base,
-    type: z.literal('multi'),
-    options: z.array(OptionSchema).min(2),
-    minSelected: z.number().int().min(1).default(1),
-    maxSelected: z.number().int().min(1).optional(),
+  z.looseObject({ ...stepBase, type: z.literal('info') }),
+  z.looseObject({
+    ...stepBase,
+    type: z.literal('single-select'),
+    input: z.looseObject({ name: z.string(), options: z.array(OptionSchema).min(2) }),
+    validation: ValidationSchema.default({ required: true, messages: {} }),
   }),
-  z.object({
-    ...base,
+  z.looseObject({
+    ...stepBase,
+    type: z.literal('multi-select'),
+    input: z.looseObject({ name: z.string(), options: z.array(OptionSchema).min(2) }),
+    validation: ValidationSchema.default({ required: true, messages: {} }),
+  }),
+  z.looseObject({
+    ...stepBase,
     type: z.literal('number'),
-    min: z.number(),
-    max: z.number(),
-    unit: z.string().optional(),
-    placeholder: z.string().optional(),
-    // Bucket edges for analytics: the raw number never leaves the session state.
-    buckets: z.array(z.number()).default([]),
+    input: z.looseObject({
+      name: z.string(),
+      min: z.number().optional(),
+      max: z.number().optional(),
+      step: z.number().positive().optional(),
+      unit: z.string().optional(),
+    }),
+    validation: ValidationSchema.default({ required: true, messages: {} }),
   }),
-  z.object({
-    ...base,
-    type: z.literal('info'),
-    body: z.string().optional(),
-    cta: z.string().default('Продолжить'),
-    secondaryAction: SecondaryActionSchema.optional(),
-  }),
-  z.object({
-    ...base,
-    type: z.literal('result'),
-    body: z.string().optional(), // supports {{value:stepId}} and {{label:stepId}}
-    bullets: z.array(z.string()).default([]),
-    cta: z.object({ label: z.string(), url: z.string() }),
-    secondaryAction: SecondaryActionSchema.optional(),
-  }),
+  z.looseObject({ ...stepBase, type: z.literal('result'), resultSource: z.string().default('resultRules') }),
 ]);
 export type Step = z.infer<typeof StepSchema>;
 export type StepType = Step['type'];
+export type InputStep = Extract<Step, { input: unknown }>;
 
-// Variant override: shallow per-step field patches (texts, options, `next` for reordering, result content),
-// a different start step, and steps removed for this variant.
-export const VariantOverrideSchema = z.object({
-  start: z.string().optional(),
-  steps: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
-  removeSteps: z.array(z.string()).default([]),
+// ---- Results ----
+
+export const CtaSchema = z.looseObject({ label: z.string(), action: z.string() });
+
+export const ResultSchema = z.looseObject({
+  id: z.string(),
+  title: z.string(),
+  summary: z.string().optional(),
+  recommendations: z.array(z.string()).default([]),
+  cta: CtaSchema,
+});
+export type Result = z.infer<typeof ResultSchema>;
+
+// ---- Experiment ----
+
+export const VariantDefSchema = z.looseObject({
+  weight: z.number().min(0),
+  stepSequence: z.array(z.string()).min(1),
+  // Deep-merged into the step / result (e.g. { content: { title } }, { cta: { label } }).
+  stepOverrides: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
+  resultOverrides: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
 });
 
-export const FunnelConfigSchema = z.object({
-  slug: z.string().regex(/^[a-z0-9-]+$/),
+export const FunnelConfigSchema = z.looseObject({
+  schemaVersion: z.string(),
+  funnelId: z.string().regex(/^[a-z0-9-]+$/),
+  version: z.number().int().positive(),
+  status: z.string().optional(),
+  locale: z.string().default('en'),
   title: z.string(),
-  start: z.string(),
-  steps: z.array(StepSchema).min(6),
-  experiment: z.object({
-    key: z.string(),
-    hypothesis: z.string().optional(),
-    primaryMetric: z.string().optional(),
-    splitB: z.number().min(0).max(1).default(0.5),
+  description: z.string().optional(),
+  releaseNote: z.string().optional(),
+  session: z
+    .looseObject({
+      ttlHours: z.number().positive().default(72),
+      persistAnswers: z.boolean().default(true),
+      pinVersion: z.boolean().default(true),
+      pinExperimentVariant: z.boolean().default(true),
+    })
+    .default({ ttlHours: 72, persistAnswers: true, pinVersion: true, pinExperimentVariant: true }),
+  progress: z
+    .looseObject({
+      countVisibleOnly: z.boolean().default(true),
+      excludeTypes: z.array(z.string()).default(['info', 'result']),
+    })
+    .default({ countVisibleOnly: true, excludeTypes: ['info', 'result'] }),
+  experiment: z.looseObject({
+    id: z.string(),
+    assignment: z.string().default('server'),
+    sticky: z.boolean().default(true),
+    overrideQueryParam: z.string().default('variant'),
+    variants: z.object({ A: VariantDefSchema, B: VariantDefSchema }),
   }),
-  variants: z
-    .object({ A: VariantOverrideSchema.optional(), B: VariantOverrideSchema.optional() })
-    .default({}),
+  steps: z.record(z.string(), StepSchema),
+  resultRules: z.array(z.object({ resultId: z.string(), when: ConditionSchema })).default([]),
+  defaultResultId: z.string(),
+  results: z.record(z.string(), ResultSchema),
+  events: z.looseObject({
+    baseProperties: z.array(z.string()).default([]),
+    allowed: z
+      .array(
+        z.looseObject({
+          name: z.string().regex(EventNameRe),
+          trigger: z.string().optional(),
+          properties: z.array(z.string()).default([]),
+        }),
+      )
+      .min(1),
+    privacy: z
+      .looseObject({ storeRawAnswers: z.boolean().default(false), allowAnswerKinds: z.boolean().default(true) })
+      .default({ storeRawAnswers: false, allowAnswerKinds: true }),
+  }),
 });
 export type FunnelConfig = z.infer<typeof FunnelConfigSchema>;
 export type FunnelConfigInput = z.input<typeof FunnelConfigSchema>;
 
-// Answer values as stored in session state.
+// Answer values as stored in session state, keyed by input.name.
 export type AnswerValue = string | string[] | number | null;
 export type Answers = Record<string, AnswerValue>;
 

@@ -7,7 +7,14 @@ import { z, ZodError } from 'zod';
 import { computeAnalytics } from './analytics';
 import type { Db } from './db';
 import { ingestEvents } from './ingest';
-import { CreateSessionBody, createOrResumeSession, getSession, UpdateStateBody, updateState } from './sessions';
+import {
+  CreateSessionBody,
+  createOrResumeSession,
+  getResult,
+  getSession,
+  UpdateStateBody,
+  updateState,
+} from './sessions';
 import { funnelAdmin, getVersionConfig, HttpError, listFunnels, publishVersion, rollback } from './versions';
 
 export interface AppOptions {
@@ -58,6 +65,7 @@ export function buildApp({ db, configsDir, webDir, adminToken, logger = false }:
   // --- Funnel runtime ---
   app.post('/api/sessions', async (req) => createOrResumeSession(db, CreateSessionBody.parse(req.body)));
   app.get<{ Params: { id: string } }>('/api/sessions/:id', async (req) => getSession(db, req.params.id));
+  app.get<{ Params: { id: string } }>('/api/sessions/:id/result', async (req) => getResult(db, req.params.id));
   app.put<{ Params: { id: string } }>('/api/sessions/:id/state', async (req) =>
     updateState(db, req.params.id, UpdateStateBody.parse(req.body)),
   );
@@ -105,7 +113,7 @@ export function buildApp({ db, configsDir, webDir, adminToken, logger = false }:
   app.get('/api/analytics', async (req) => {
     const q = z
       .object({
-        slug: z.string().default('bible-plan'),
+        slug: z.string().default('workstyle-planner'),
         version: z.coerce.number().int().positive().optional(),
         variant: z.enum(['A', 'B']).optional(),
         utm_campaign: z.string().optional(),

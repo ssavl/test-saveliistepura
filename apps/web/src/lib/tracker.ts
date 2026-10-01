@@ -13,8 +13,11 @@ const BATCH_SIZE = 100;
 const MAX_QUEUE = 2000;
 
 type TrackedEvent = FunnelEventInput & { event_id: string };
+type TrackerSession = Pick<SessionDto, 'id' | 'slug' | 'version' | 'experimentId' | 'variant' | 'utm'>;
 
-let session: Pick<SessionDto, 'id' | 'version' | 'variant' | 'utm'> | null = null;
+let session: TrackerSession | null = null;
+// Pinned config's events.allowed: event name -> allowed property names.
+let allowed: Record<string, string[]> = {};
 let inFlight: Promise<void> | null = null;
 let started = false;
 
@@ -33,6 +36,7 @@ export function uuid(): string {
 const readQueue = () => storage.getJSON<TrackedEvent[]>(QUEUE_KEY, []);
 const writeQueue = (q: TrackedEvent[]) => storage.setJSON(QUEUE_KEY, q.slice(-MAX_QUEUE));
 
+// Client seq starts at 1 (the server records session_started as seq 0).
 function nextSeq(sessionId: string): number {
   const cur = Number(storage.get(seqKey(sessionId)) ?? '0');
   const next = (Number.isFinite(cur) ? cur : 0) + 1;
@@ -40,24 +44,37 @@ function nextSeq(sessionId: string): number {
   return next;
 }
 
-export function setTrackerSession(s: Pick<SessionDto, 'id' | 'version' | 'variant' | 'utm'> | null) {
+export function setTrackerSession(s: TrackerSession | null, events: Record<string, string[]> = {}) {
   session = s;
+  allowed = events;
   startTracker();
 }
 
+export const isEventAllowed = (name: string) => Object.hasOwn(allowed, name);
+
+/** Queues an event if the pinned config allows it; properties outside the allowlist are dropped. */
 export function track(name: string, stepId: string | null, props: Record<string, unknown> = {}) {
   if (!session) return;
+  const allowedProps = allowed[name];
+  if (!allowedProps) return;
+  const properties: Record<string, unknown> = {};
+  for (const k of allowedProps) if (props[k] !== undefined) properties[k] = props[k];
+  const utm = session.utm ?? {};
   const event: TrackedEvent = {
     event_id: uuid(),
     session_id: session.id,
     name,
-    client_ts: Date.now(),
+    client_timestamp: Date.now(),
     seq: nextSeq(session.id),
+    funnel_id: session.slug,
     funnel_version: session.version,
+    experiment_id: session.experimentId,
     variant: session.variant,
     step_id: stepId,
-    utm: session.utm,
-    props,
+    utm_source: utm.utm_source ?? null,
+    utm_medium: utm.utm_medium ?? null,
+    utm_campaign: utm.utm_campaign ?? null,
+    properties,
   };
   const q = readQueue();
   q.push(event);

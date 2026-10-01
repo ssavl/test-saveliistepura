@@ -110,7 +110,7 @@ export function ProgressBar({ ratio }: { ratio: number }) {
   );
 }
 
-export function Loading({ text = 'Загрузка…' }: { text?: string }) {
+export function Loading({ text = 'Loading…' }: { text?: string }) {
   return (
     <View style={styles.center}>
       <ActivityIndicator color={colors.accent} size="large" />
@@ -122,9 +122,9 @@ export function Loading({ text = 'Загрузка…' }: { text?: string }) {
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <View style={styles.center}>
-      <Text style={styles.errorTitle}>Не удалось загрузить</Text>
+      <Text style={styles.errorTitle}>Something went wrong</Text>
       <Text style={[styles.muted, { textAlign: 'center' }]}>{message}</Text>
-      {onRetry ? <Button title="Повторить" onPress={onRetry} style={{ alignSelf: 'stretch' }} /> : null}
+      {onRetry ? <Button title="Try again" onPress={onRetry} style={{ alignSelf: 'stretch' }} /> : null}
     </View>
   );
 }

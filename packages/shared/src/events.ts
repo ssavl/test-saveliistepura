@@ -1,40 +1,40 @@
-// Event schema shared by the client tracker, ingest endpoint and traffic generator.
+// Event envelope: config `events.baseProperties` + `seq` (client ordering) + `properties`.
+// Which event names and which properties are accepted is decided per pinned config version (events.allowed).
 import { z } from 'zod';
 import { EventNameRe, VariantSchema } from './config';
+import { CORE_EVENT_NAMES } from './engine';
 
-export const CORE_EVENTS = [
-  'session_started',
-  'step_viewed',
-  'answer_submitted',
-  'step_completed',
-  'back_clicked',
-  'result_viewed',
-  'cta_clicked',
-] as const;
-export type CoreEventName = (typeof CORE_EVENTS)[number];
+export const CORE_EVENTS = CORE_EVENT_NAMES;
 
-// Events that must reference a step.
+// Events that must reference a step of the session's funnel.
 export const STEP_EVENTS: ReadonlySet<string> = new Set([
   'step_viewed',
   'answer_submitted',
   'step_completed',
   'back_clicked',
   'result_viewed',
+  'cta_clicked',
 ]);
+
+const utm = z.string().max(200).nullable().optional();
 
 export const EventSchema = z.object({
   event_id: z.uuid(),
   session_id: z.uuid(),
-  // Open set: config-defined events (e.g. added in a new version) are accepted without schema changes.
   name: z.string().regex(EventNameRe),
-  client_ts: z.number().int().positive(),
+  client_timestamp: z.number().int().positive(),
   // Per-session monotonic counter from the client: orders events regardless of arrival order.
   seq: z.number().int().min(0),
+  // The following are overwritten by the server from the stored session (the client is not trusted).
+  funnel_id: z.string().max(64),
   funnel_version: z.number().int().positive(),
+  experiment_id: z.string().max(128),
   variant: VariantSchema,
   step_id: z.string().max(64).nullable(),
-  utm: z.record(z.string(), z.string().max(200)).default({}),
-  props: z.record(z.string(), z.unknown()).default({}),
+  utm_source: utm,
+  utm_medium: utm,
+  utm_campaign: utm,
+  properties: z.record(z.string(), z.unknown()).default({}),
 });
 export type FunnelEvent = z.infer<typeof EventSchema>;
 export type FunnelEventInput = z.input<typeof EventSchema>;
@@ -50,10 +50,10 @@ export interface IngestResult {
 export const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 
 export function pickUtm(params: Record<string, unknown>): Record<string, string> {
-  const utm: Record<string, string> = {};
+  const out: Record<string, string> = {};
   for (const k of UTM_KEYS) {
     const v = params[k];
-    if (typeof v === 'string' && v) utm[k] = v.slice(0, 200);
+    if (typeof v === 'string' && v) out[k] = v.slice(0, 200);
   }
-  return utm;
+  return out;
 }

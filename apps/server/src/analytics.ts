@@ -2,7 +2,6 @@
 // never inflate numbers; ordering uses the client `seq`, never arrival order.
 import {
   type AnalyticsResponse,
-  applyVariant,
   CORE_EVENTS,
   NO_CAMPAIGN,
   type GroupMetrics,
@@ -10,7 +9,7 @@ import {
   type Variant,
 } from '@funnel/shared';
 import type { Db } from './db';
-import { getVersionConfig } from './versions';
+import { getFunnel } from './versions';
 
 export interface AnalyticsFilters {
   version?: number;
@@ -103,6 +102,14 @@ export function computeAnalytics(db: Db, slug: string, filters: AnalyticsFilters
   const a = byVariant.find((g) => g.key === 'A');
   const b = byVariant.find((g) => g.key === 'B');
 
+  // Which result the session saw comes from result_viewed / cta_clicked properties (result_id).
+  const byResult = all<{ key: string; seen: number; cta: number }>(
+    `SELECT json_extract(props_json, '$.result_id') AS key,
+            COUNT(DISTINCT session_id) AS seen,
+            COUNT(DISTINCT CASE WHEN name = 'cta_clicked' THEN session_id END) AS cta
+     FROM ev WHERE name IN ('result_viewed', 'cta_clicked') AND key IS NOT NULL GROUP BY key ORDER BY seen DESC, key`,
+  ).map((r) => groupMetrics(String(r.key), r.seen, r.seen, r.cta));
+
   const otherEvents = all<{ name: string; sessions: number; events: number }>(
     `SELECT name, COUNT(DISTINCT session_id) AS sessions, COUNT(*) AS events FROM ev
      WHERE name NOT IN (${CORE_EVENTS.map((n) => `'${n}'`).join(',')}) GROUP BY name ORDER BY name`,
@@ -120,6 +127,7 @@ export function computeAnalytics(db: Db, slug: string, filters: AnalyticsFilters
     abTest: abTest(a, b),
     byVersion: group('funnel_version'),
     byCampaign: group('utm_campaign'),
+    byResult,
     otherEvents,
     campaigns: (
       db
@@ -135,28 +143,26 @@ export function computeAnalytics(db: Db, slug: string, filters: AnalyticsFilters
   };
 }
 
-/** Display order: union of BFS orders of the configs in scope, newest version first. */
+/** Display order: union of the variants' stepSequences in scope (newest version first), result last. */
 function stepOrder(db: Db, slug: string, versions: number[], variant?: Variant) {
   const order: string[] = [];
   const types = new Map<string, string>();
   for (const version of versions) {
-    const config = getVersionConfig(db, slug, version);
-    if (!config) continue;
     for (const v of variant ? [variant] : (['A', 'B'] as const)) {
-      const funnel = applyVariant(config, v);
+      const funnel = getFunnel(db, slug, version, v);
+      if (!funnel) continue;
       let prev: string | null = null;
-      for (const id of funnel.order) {
+      for (const id of funnel.sequence) {
         types.set(id, funnel.steps[id].type);
         if (!order.includes(id)) {
-          // Insert right after the predecessor from this path so branches sit next to their parent.
-          const at = prev === null ? order.length : order.indexOf(prev) + 1;
+          // Insert right after this sequence's predecessor so new/branch steps sit next to their context.
+          const at = prev === null ? 0 : order.indexOf(prev) + 1;
           order.splice(at, 0, id);
         }
         prev = id;
       }
     }
   }
-  // Result steps always go last.
   order.sort((x, y) => Number(types.get(x) === 'result') - Number(types.get(y) === 'result'));
   return { order, types };
 }

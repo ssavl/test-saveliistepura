@@ -1,9 +1,10 @@
 import type { AnalyticsResponse, FunnelEventInput, SessionResponse } from '@funnel/shared';
 import { describe, expect, it } from 'vitest';
-import { makeEvent, setup } from './helpers';
+import { loadConfig, makeEvent, setup } from './helpers';
 
-type Step = [name: string, stepId: string | null];
-const flow = (s: SessionResponse, steps: Step[]) => steps.map(([name, id], i) => makeEvent(s, name, id, i + 1));
+type Step = [name: string, stepId: string | null, props?: Record<string, unknown>];
+const flow = (s: SessionResponse, steps: Step[]) =>
+  steps.map(([name, id, properties = {}], i) => makeEvent(s, name, id, i + 1, { properties }));
 const pass = (id: string): Step[] => [['step_viewed', id], ['step_completed', id]];
 
 async function scenario() {
@@ -15,34 +16,36 @@ async function scenario() {
   const s4 = await start({ variantOverride: 'B' });
   const s5 = await start({ variantOverride: 'B', utm: { utm_campaign: 'c2' } });
 
-  // S1: full path with a back-click and repeated views of goal/experience, reaches result, clicks CTA.
+  // S1: back-click from priorities to work_mode (repeated views), reaches result, clicks CTA.
   const e1 = flow(s1, [
-    ...pass('welcome'), ...pass('goal'), ['step_viewed', 'experience'], ['back_clicked', 'experience'],
-    ['step_viewed', 'goal'], ['step_completed', 'goal'], ...pass('experience'), ...pass('topics'),
-    ...pass('minutes'), ...pass('reminder'), ['step_viewed', 'result'], ['result_viewed', 'result'],
-    ['cta_clicked', 'result'],
+    ...pass('intro'), ...pass('team_size'), ...pass('work_mode'), ['step_viewed', 'priorities'],
+    ['back_clicked', 'priorities'], ['step_viewed', 'work_mode'], ['step_completed', 'work_mode'],
+    ...pass('priorities'), ...pass('timezone_span'), ...pass('async_maturity'), ...pass('tool_count'),
+    ['step_viewed', 'result'], ['result_viewed', 'result', { result_id: 'async_native' }],
+    ['cta_clicked', 'result', { result_id: 'async_native', action: 'expand_recommendation' }],
   ]);
-  // S2: drops at goal. S3: variant B order, reaches result, no CTA. S4: no client events at all.
-  const e2 = flow(s2, [...pass('welcome'), ['step_viewed', 'goal']]);
+  // S2: drops at team_size. S3: variant B order, reaches result, no CTA. S4: no client events at all.
+  const e2 = flow(s2, [...pass('intro'), ['step_viewed', 'team_size']]);
   const e3 = flow(s3, [
-    ...pass('welcome'), ...pass('goal'), ...pass('minutes'), ...pass('experience'), ...pass('topics'),
-    ...pass('reminder'), ['step_viewed', 'result'], ['result_viewed', 'result'],
+    ...pass('intro'), ...pass('work_mode'), ...pass('timezone_span'), ...pass('team_size'),
+    ...pass('async_maturity'), ...pass('priorities'), ...pass('tool_count'), ['step_viewed', 'result'],
+    ['result_viewed', 'result', { result_id: 'balanced' }],
   ]);
-  // S5: drops at minutes; its events arrive out of order.
-  const e5 = flow(s5, [...pass('welcome'), ...pass('goal'), ['step_viewed', 'minutes']]);
+  // S5: drops at timezone_span; its events arrive out of order.
+  const e5 = flow(s5, [...pass('intro'), ...pass('work_mode'), ['step_viewed', 'timezone_span']]);
 
-  const shuffled = (xs: FunnelEventInput[]) => [...xs].reverse();
-  await api('POST', '/api/events', { events: shuffled(e1) });
+  const reversed = (xs: FunnelEventInput[]) => [...xs].reverse();
+  await api('POST', '/api/events', { events: reversed(e1) });
   await api('POST', '/api/events', { events: [...e1.slice(0, 5), ...e2, e2[0]] }); // duplicates
   await api('POST', '/api/events', { events: e3 });
   await api('POST', '/api/events', { events: e3 }); // retried batch
   await api('POST', '/api/events', { events: [e5[4]] }); // latest event first
-  await api('POST', '/api/events', { events: shuffled(e5.slice(0, 4)) });
+  await api('POST', '/api/events', { events: reversed(e5.slice(0, 4)) });
   return ctx;
 }
 
 const get = async (api: ReturnType<typeof setup>['api'], qs = '') =>
-  (await api<AnalyticsResponse>('GET', `/api/analytics?slug=bible-plan${qs}`)).body;
+  (await api<AnalyticsResponse>('GET', `/api/analytics?slug=workstyle-planner${qs}`)).body;
 const step = (r: AnalyticsResponse, id: string) => r.steps.find((s) => s.stepId === id)!;
 
 describe('analytics', () => {
@@ -53,21 +56,21 @@ describe('analytics', () => {
     expect(r.totals.ctr).toBe(0.5);
     expect(r.totals.ctaConversion).toBe(0.2);
 
-    expect(step(r, 'welcome')).toMatchObject({ viewed: 4, completed: 4, dropped: 0 });
-    expect(step(r, 'goal')).toMatchObject({ viewed: 4, completed: 3, dropped: 1, conversion: 0.75, reach: 0.8 });
-    expect(step(r, 'experience')).toMatchObject({ viewed: 2, completed: 2, backClicks: 1, dropped: 0 });
-    expect(step(r, 'minutes')).toMatchObject({ viewed: 3, completed: 2, dropped: 1 });
+    expect(step(r, 'intro')).toMatchObject({ viewed: 4, completed: 4, dropped: 0 });
+    expect(step(r, 'team_size')).toMatchObject({ viewed: 3, completed: 2, dropped: 1, reach: 0.6 });
+    expect(step(r, 'work_mode')).toMatchObject({ viewed: 3, completed: 3, dropped: 0 });
+    expect(step(r, 'priorities')).toMatchObject({ viewed: 2, completed: 2, backClicks: 1 });
+    expect(step(r, 'timezone_span')).toMatchObject({ viewed: 3, completed: 2, dropped: 1 });
     expect(step(r, 'result')).toMatchObject({ viewed: 2, completed: 1, type: 'result' });
 
-    // Every started session is either at the result or dropped exactly once.
+    // Every started session is either at a result or dropped exactly once.
     const dropped = r.steps.reduce((acc, s) => acc + s.dropped, 0) + r.totals.droppedBeforeFirstStep;
     expect(dropped + r.totals.resultViewed).toBe(r.totals.started);
-    // Result step is ordered last; branch steps are included.
     expect(r.steps.at(-1)!.stepId).toBe('result');
-    expect(r.steps.map((s) => s.stepId)).toContain('newcomer_tip');
+    expect(r.steps.map((s) => s.stepId)).toContain('office_days');
   });
 
-  it('compares variants, versions and campaigns', async () => {
+  it('compares variants, versions, campaigns and results', async () => {
     const { api } = await scenario();
     const r = await get(api);
     expect(r.byVariant.map((g) => [g.key, g.started, g.resultViewed, g.ctaClicked])).toEqual([
@@ -81,7 +84,10 @@ describe('analytics', () => {
       ['c1', 2],
       ['c2', 2],
     ]);
-    expect(r.campaigns).toEqual(['(none)', 'c1', 'c2']);
+    expect(r.byResult.map((g) => [g.key, g.resultViewed, g.ctaClicked])).toEqual([
+      ['async_native', 1, 1],
+      ['balanced', 1, 0],
+    ]);
   });
 
   it('filters by utm_campaign, variant and version', async () => {
@@ -93,17 +99,17 @@ describe('analytics', () => {
   });
 
   it('keeps analytics per version across publish and rollback', async () => {
-    const { api, start } = await scenario();
-    const v2 = structuredClone((await api('GET', '/api/admin/funnels/bible-plan/versions/1')).body.config);
-    await api('POST', '/api/admin/funnels/bible-plan/versions', { config: v2 });
+    const { api, start, publish, rollback } = await scenario();
+    await publish(loadConfig(2));
     const s = await start();
-    await api('POST', '/api/events', { events: flow(s, [['step_viewed', 'welcome']]) });
-    await api('POST', '/api/admin/funnels/bible-plan/rollback', {});
+    await api('POST', '/api/events', { events: flow(s, [['step_viewed', 'intro']]) });
+    await rollback();
     const r = await get(api);
     expect(r.byVersion.map((g) => [g.key, g.started])).toEqual([
       ['1', 5],
       ['2', 1],
     ]);
     expect((await get(api, '&version=1')).totals.started).toBe(5);
+    expect(r.steps.map((s) => s.stepId)).toContain('meeting_hours');
   });
 });

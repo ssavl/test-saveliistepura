@@ -1,6 +1,8 @@
 // Synthetic traffic generator: drives sessions through the REAL HTTP API (see packages/shared/src/api.ts).
 // Usage: npm run traffic -- [--sessions 160] [--base-url http://localhost:3000] [--seed 42] ...
-import type { AnalyticsResponse } from '@funnel/shared';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import type { AnalyticsResponse, ConfigIssue, FunnelAdminDto } from '@funnel/shared';
 import { Api, describe, NetworkError } from './traffic/http';
 import { compareAnalytics, expectedFrom, printLocalSummary } from './traffic/report';
 import { FatalError, type SessionOutcome, type SimOptions, simulateSession } from './traffic/simulate';
@@ -8,20 +10,27 @@ import { FatalError, type SessionOutcome, type SimOptions, simulateSession } fro
 const HELP = `Funnel Runtime — synthetic traffic generator
 
 Drives N sessions through the real HTTP API (POST /api/sessions, PUT /api/sessions/:id/state,
-POST /api/events): UTM campaigns, A/B (server-assigned + ~10% variantOverride), branching answers,
-drop-offs, back clicks, and dirty delivery (duplicate event_ids, re-sent batches, out-of-order and
-shuffled batches, invalid events). Prints the intended numbers and compares them with the change in
-GET /api/analytics (fetched before and after the run, so an existing DB is fine).
+GET /api/sessions/:id/result, POST /api/events) using the shared engine on the session's pinned
+config: UTM campaigns, A/B (server-assigned + ~10% variantOverride), answers that hit every branch and
+result (work_mode remote/hybrid/office, meeting_hours >= 15, compliance follow-up), drop-offs, back
+clicks with re-answers, and dirty delivery (duplicate event_ids, re-sent batches, out-of-order and
+shuffled batches, invalid events). Only events/properties allowed by the pinned version are sent.
+Prints the intended numbers and compares them with the change in GET /api/analytics (fetched before
+and after the run, so an existing DB is fine).
 
 Usage: npm run traffic -- [options]
 
 Options:
   --sessions N        number of sessions (default 160)
   --base-url URL      server URL (default $BASE_URL or http://localhost:3000)
-  --slug SLUG         funnel slug (default bible-plan)
+  --slug SLUG         funnel slug (default workstyle-planner)
+  --publish FILE      before generating, publish this config (e.g. configs/funnel-v2.json) via
+                      POST /api/admin/funnels/:slug/versions; if it is already published (409) and not
+                      active, activate it via POST /api/admin/funnels/:slug/rollback {toVersion}
+  --admin-token TOK   x-admin-token for admin calls (default $ADMIN_TOKEN)
   --seed N            RNG seed for reproducible behaviour (default: random, printed)
   --concurrency N     parallel sessions (default 8)
-  --days N            spread client_ts over the last N days (default 7)
+  --days N            spread client_timestamp over the last N days (default 7)
   --cta-a P           CTA click probability on the result screen, variant A (default 0.45)
   --cta-b P           CTA click probability on the result screen, variant B (default 0.6)
   --override-rate P   share of sessions that pass variantOverride (default 0.1)
@@ -29,16 +38,23 @@ Options:
   --no-verify         skip the analytics comparison
   -h, --help          show this help
 
-Exit code: 0 on success; 1 if the server is unreachable, requests failed or numbers mismatched.
+Examples (simulate v1, then v2, then v3 on one server):
+  npm run traffic -- --seed 1
+  npm run traffic -- --seed 2 --publish configs/funnel-v2.json
+  npm run traffic -- --seed 3 --publish configs/funnel-v3.json
+
+Exit code: 0 on success; 1 if the server is unreachable, publishing failed, requests failed, a server
+result differed from the local engine, or numbers mismatched; 2 on bad arguments.
 Determinism: with the same --seed everything the generator decides (campaigns, overrides, answers,
 drop-offs, backs, dirty data, timestamps relative to now) is identical. The A/B split of sessions
-without an override is assigned by the server from the random session id, so per-variant numbers
-can differ between runs.`;
+without an override is assigned by the server, so per-variant numbers can differ between runs.`;
 
 interface Args {
   sessions: number;
   baseUrl: string;
   slug: string;
+  publish?: string;
+  adminToken?: string;
   seed: number;
   concurrency: number;
   days: number;
@@ -53,7 +69,8 @@ function parseArgs(argv: string[]): Args {
   const a: Args = {
     sessions: 160,
     baseUrl: process.env.BASE_URL ?? 'http://localhost:3000',
-    slug: 'bible-plan',
+    slug: 'workstyle-planner',
+    adminToken: process.env.ADMIN_TOKEN || undefined,
     seed: Math.floor(Math.random() * 2 ** 31),
     concurrency: 8,
     days: 7,
@@ -90,6 +107,8 @@ function parseArgs(argv: string[]): Args {
       case '--sessions': a.sessions = num(1, 100_000, true); break;
       case '--base-url': a.baseUrl = val(); break;
       case '--slug': a.slug = val(); break;
+      case '--publish': a.publish = val(); break;
+      case '--admin-token': a.adminToken = val(); break;
       case '--seed': a.seed = num(0, 2 ** 32 - 1, true); break;
       case '--concurrency': a.concurrency = num(1, 64, true); break;
       case '--days': a.days = num(0.01, 365); break;
@@ -111,6 +130,66 @@ async function fetchAnalytics(api: Api, slug: string): Promise<AnalyticsResponse
   return null;
 }
 
+/**
+ * Makes the config in `file` the active version: publish it; on 409 (already published) activate it via
+ * rollback unless it is already active.
+ */
+async function publish(api: Api, slug: string, file: string, headers?: Record<string, string>) {
+  // Relative paths: try the current directory, then the repo root (npm -w runs in apps/server).
+  const candidates = [resolve(file), resolve(import.meta.dirname, '../../..', file)];
+  const path = candidates.find((p) => {
+    try {
+      readFileSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!path) {
+    console.error(`error: --publish: cannot read ${file}`);
+    process.exit(1);
+  }
+  let config: { version?: unknown; funnelId?: unknown };
+  try {
+    config = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (e) {
+    console.error(`error: --publish: ${file} is not valid JSON (${(e as Error).message})`);
+    process.exit(1);
+  }
+  if (config.funnelId !== slug) console.warn(`warning: ${file} has funnelId "${String(config.funnelId)}", publishing to slug "${slug}"`);
+  const version = Number(config.version);
+  const base = `/api/admin/funnels/${encodeURIComponent(slug)}`;
+  const res = await api.post<{ version: number; issues?: ConfigIssue[] }>(`${base}/versions`, { config, note: `traffic generator: ${file}` }, headers);
+  const printIssues = (issues: ConfigIssue[] | undefined) => {
+    for (const i of issues ?? []) console.log(`  ${i.level}${i.variant ? ` [${i.variant}]` : ''}: ${i.message}`);
+  };
+  if (res.ok) {
+    console.log(`Published ${file} as v${res.body.version}.`);
+    printIssues(res.body.issues);
+    if (res.body.version !== version) console.warn(`warning: server published v${res.body.version}, config.version is ${version}`);
+  } else if (res.status === 409) {
+    console.log(`${file}: v${version} is already published.`);
+  } else {
+    console.error(`error: publishing ${file} failed: ${describe(res)}`);
+    if (res.status === 400) printIssues((res.body as { issues?: ConfigIssue[] })?.issues);
+    if (res.status === 401 || res.status === 403) console.error('hint: pass --admin-token or set ADMIN_TOKEN');
+    process.exit(1);
+  }
+  const info = await api.get<FunnelAdminDto>(base, headers);
+  if (!info.ok) {
+    console.error(`error: GET ${base}: ${describe(info)}`);
+    process.exit(1);
+  }
+  if (info.body.activeVersion !== version) {
+    const rb = await api.post<FunnelAdminDto>(`${base}/rollback`, { toVersion: version }, headers);
+    if (!rb.ok || rb.body.activeVersion !== version) {
+      console.error(`error: activating v${version} failed: ${describe(rb)}`);
+      process.exit(1);
+    }
+    console.log(`Activated v${version} (was v${info.body.activeVersion}).`);
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const api = new Api(args.baseUrl);
@@ -122,11 +201,11 @@ async function main() {
     overrideRate: args.overrideRate,
     ctaProb: { A: args.ctaA, B: args.ctaB },
     // Plausible abandonment: some bounce on the welcome screen, most friction on the number input.
-    dropProb: { beforeFirstView: 0.02, start: 0.1, single: 0.05, multi: 0.08, number: 0.14, info: 0.03 },
+    dropProb: { beforeFirstView: 0.02, start: 0.1, 'single-select': 0.04, 'multi-select': 0.07, number: 0.1, info: 0.03 },
     backProb: 0.07,
-    backFromResultProb: 0.05,
+    backFromResultProb: 0.06,
     maxBacks: 2,
-    secondaryActionProb: 0.3,
+    reanswerProb: 0.6,
     dirty: args.clean
       ? { dupInBatch: 0, shuffleBatch: 0, invalidInBatch: 0, outOfOrder: 0, resendBatch: 0 }
       : { dupInBatch: 0.07, shuffleBatch: 0.1, invalidInBatch: 0.05, outOfOrder: 0.12, resendBatch: 0.08 },
@@ -142,6 +221,21 @@ async function main() {
   } catch (e) {
     console.error(`error: server unreachable at ${args.baseUrl} (${(e as Error).message})`);
     process.exit(1);
+  }
+
+  const admin = args.adminToken ? { 'x-admin-token': args.adminToken } : undefined;
+  if (args.publish) await publish(api, args.slug, args.publish, admin);
+  const active = await api.get<FunnelAdminDto>(`/api/admin/funnels/${encodeURIComponent(args.slug)}`, admin);
+  if (active.ok) {
+    const v = active.body.versions?.find((x) => x.active);
+    console.log(`Active version of ${args.slug}: v${active.body.activeVersion}` +
+      `${v ? ` (${v.sessions} sessions so far${v.status ? `, status ${v.status}` : ''})` : ''}` +
+      `${active.body.versions?.length ? `; published: ${active.body.versions.map((x) => x.version).join(', ')}` : ''}`);
+  } else if (args.publish) {
+    console.error(`error: GET /api/admin/funnels/${args.slug}: ${describe(active)}`);
+    process.exit(1);
+  } else {
+    console.warn(`warning: active version unknown (GET /api/admin/funnels/${args.slug}: ${describe(active)}); sessions report their pinned version`);
   }
 
   const before = args.verify ? await fetchAnalytics(api, args.slug) : null;
