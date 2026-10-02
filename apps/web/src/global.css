@@ -7,3 +7,28 @@
   --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
 }
+
+#funnel-page [role='button'],
+#funnel-page [role='radio'],
+#funnel-page [role='checkbox'] {
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+#funnel-page :is([role='button'], [role='radio'], [role='checkbox'], input):focus-visible {
+  outline: 3px solid #24634e;
+  outline-offset: 4px;
+}
+
+@media (hover: hover) {
+  #funnel-page :is([role='radio'], [role='checkbox']):not([aria-disabled='true']):hover {
+    border-color: #24634e;
+    background-color: #eaf2e9;
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #funnel-page [role] {
+    transition: none;
+  }
+}

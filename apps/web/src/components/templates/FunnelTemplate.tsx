@@ -19,13 +19,14 @@ export function FunnelTemplate({ title, complete, children }: FunnelTemplateProp
   const wide = width >= WIDE_WIDTH;
   return (
     <ScrollView
+      nativeID="funnel-page"
       style={s.page}
       contentContainerStyle={[s.content, !wide && s.contentCompact]}
       keyboardShouldPersistTaps="handled">
       <View style={s.container}>
         <View style={s.nav}>
           <BrandLogo />
-          <AppText variant="label">A little clarity goes a long way</AppText>
+          {width >= 600 ? <AppText variant="label">A little clarity goes a long way</AppText> : null}
         </View>
         <View style={[s.layout, !wide && s.layoutCompact]}>
           {wide ? <FunnelAside title={title} /> : null}
@@ -43,7 +44,7 @@ export function FunnelTemplate({ title, complete, children }: FunnelTemplateProp
 const s = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.bg },
   content: { flexGrow: 1, padding: 40, alignItems: 'center' },
-  contentCompact: { padding: 20 },
+  contentCompact: { padding: 16 },
   container: { width: '100%', maxWidth: 1160, flexGrow: 1 },
   nav: {
     flexDirection: 'row',
@@ -54,7 +55,7 @@ const s = StyleSheet.create({
     paddingBottom: 32,
   },
   layout: { flexDirection: 'row', gap: 24, flexGrow: 1, alignItems: 'stretch' },
-  layoutCompact: { flexDirection: 'column' },
+  layoutCompact: { flexDirection: 'column', alignItems: 'center' },
   panel: {
     flex: 1.15,
     backgroundColor: colors.card,
@@ -64,6 +65,6 @@ const s = StyleSheet.create({
     borderColor: colors.border,
     gap: 24,
   },
-  panelCompact: { padding: 22, borderRadius: 24, flex: 1 },
+  panelCompact: { padding: 20, borderRadius: 24, flex: 1, width: '100%', maxWidth: 640 },
   footer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between', paddingVertical: 24 },
 });

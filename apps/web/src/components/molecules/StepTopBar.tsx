@@ -19,7 +19,7 @@ export function StepTopBar({ label, onBack }: StepTopBarProps) {
       ) : (
         <View style={s.back} />
       )}
-      <AppText variant="overline">{label}</AppText>
+      <AppText variant="overline" style={s.label}>{label}</AppText>
     </View>
   );
 }
@@ -28,4 +28,5 @@ const s = StyleSheet.create({
   bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 32 },
   back: { minWidth: 64, minHeight: 44, justifyContent: 'center' },
   backText: { fontSize: 16 },
+  label: { flexShrink: 1, textAlign: 'right' },
 });
