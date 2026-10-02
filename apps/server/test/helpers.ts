@@ -10,7 +10,6 @@ export const loadConfig = (v: number) =>
   JSON.parse(readFileSync(new URL(`../../../configs/funnel-v${v}.json`, import.meta.url), 'utf8'));
 export const v1 = loadConfig(1);
 
-/** A copy of v1 published as another version with a different intro title — enough to tell versions apart. */
 export function v1As(version: number, title = `Intro v${version}`) {
   const c = structuredClone(v1);
   c.version = version;

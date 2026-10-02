@@ -2,13 +2,11 @@ import type { AnalyticsResponse } from '@funnel/shared';
 import { describe, expect, it } from 'vitest';
 import { loadConfig, makeEvent, setup } from './helpers';
 
-// Iteration 2 = funnel-v3.json: compliance branch, tool_count removed for B, new recommendation_expanded event.
 describe('iteration 2: v1 -> v2 -> v3, verify, roll back', () => {
   it('old sessions keep working, new ones get v3, rollback keeps analytics', async () => {
     const { api, start, publish, rollback } = setup();
     expect((await publish(loadConfig(2))).body.version).toBe(2);
 
-    // An in-flight v2/B session sitting on tool_count — a step that v3 removes for B.
     const old = await start({ variantOverride: 'B' });
     expect(old.session.version).toBe(2);
     await api('PUT', `/api/sessions/${old.session.id}/state`, {
@@ -18,7 +16,6 @@ describe('iteration 2: v1 -> v2 -> v3, verify, roll back', () => {
 
     expect((await publish(loadConfig(3))).body.version).toBe(3);
 
-    // Old session: still v2, still has tool_count, can continue saving state, sending events, getting a result.
     const resumed = await start({ sessionId: old.session.id, variantOverride: 'B' });
     expect(resumed.session.version).toBe(2);
     expect(resumed.config.experiment.variants.B.stepSequence).toContain('tool_count');
@@ -30,14 +27,13 @@ describe('iteration 2: v1 -> v2 -> v3, verify, roll back', () => {
     const late = await api('POST', '/api/events', {
       events: [
         makeEvent(old, 'step_completed', 'tool_count', 1, { properties: { next_step_id: 'result' } }),
-        makeEvent(old, 'recommendation_expanded', 'result', 2), // not part of v2
+        makeEvent(old, 'recommendation_expanded', 'result', 2),
       ],
     });
     expect(late.body.accepted).toHaveLength(1);
     expect(late.body.rejected).toHaveLength(1);
     expect((await api('GET', `/api/sessions/${old.session.id}/result`)).status).toBe(200);
 
-    // New B session on v3: tool_count is gone, compliance branch and new event work.
     const fresh = await start({ variantOverride: 'B' });
     expect(fresh.session.version).toBe(3);
     const bad = await api('PUT', `/api/sessions/${fresh.session.id}/state`, {
@@ -65,7 +61,6 @@ describe('iteration 2: v1 -> v2 -> v3, verify, roll back', () => {
     });
     expect(ev.body.accepted).toHaveLength(3);
 
-    // Roll back to v2: new sessions get v2, the v3 session keeps working on v3.
     await rollback();
     expect((await start()).session.version).toBe(2);
     expect((await start({ sessionId: fresh.session.id, variantOverride: 'B' })).session.version).toBe(3);

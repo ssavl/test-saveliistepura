@@ -1,4 +1,3 @@
-// Simulates one funnel session against the real HTTP API, like a (slightly misbehaving) web client would.
 import { randomUUID } from 'node:crypto';
 import {
   type AnswerValue,
@@ -29,7 +28,7 @@ import { type Api, describe } from './http';
 import { deriveSeed, mulberry32, type Rng } from './rng';
 
 export interface Campaign {
-  key: string; // display key; sessions are grouped server-side by utm_campaign
+  key: string;
   weight: number;
   utm: (rng: Rng) => Record<string, string>;
 }
@@ -62,7 +61,6 @@ export const CAMPAIGNS: Campaign[] = [
       utm_term: r.pick(['remote work', 'meeting load']),
     }),
   },
-  // Organic traffic has no campaign: organic search and plain direct visits.
   { key: 'google/organic', weight: 18, utm: () => ({ utm_source: 'google', utm_medium: 'organic' }) },
   { key: 'direct', weight: 12, utm: () => ({}) },
 ];
@@ -76,26 +74,24 @@ export interface SimOptions {
   days: number;
   overrideRate: number;
   ctaProb: Record<Variant, number>;
-  /** Abandon probability after viewing a step, by step type; `start` overrides for the first step. */
   dropProb: Record<DropKey, number> & { start: number; beforeFirstView: number };
   backProb: number;
   backFromResultProb: number;
   maxBacks: number;
-  /** After a back click, probability that a re-visited step gets a fresh (possibly different) answer. */
   reanswerProb: number;
   dirty: {
-    dupInBatch: number; // per batch: one event duplicated inside the same batch
-    shuffleBatch: number; // per batch: events shuffled inside the batch
-    invalidInBatch: number; // per batch: an invalid event mixed in
-    outOfOrder: number; // per session: a later batch sent before an earlier one
-    resendBatch: number; // per session: one batch re-sent (retry after timeout)
+    dupInBatch: number;
+    shuffleBatch: number;
+    invalidInBatch: number;
+    outOfOrder: number;
+    resendBatch: number;
   };
 }
 
 export interface SessionOutcome {
   index: number;
   campaign: string;
-  utmCampaign: string; // NO_CAMPAIGN when absent
+  utmCampaign: string;
   override?: Variant;
   created: boolean;
   sessionId?: string;
@@ -103,17 +99,17 @@ export interface SessionOutcome {
   version?: number;
   reachedResult: boolean;
   ctaClicked: boolean;
-  resultsSeen: Set<string>; // result ids of result_viewed events (several if the user went back and changed answers)
-  ctaResult?: string; // result id the CTA was clicked on
-  lastViewed?: string; // last step_viewed step id (by seq)
+  resultsSeen: Set<string>;
+  ctaResult?: string;
+  lastViewed?: string;
   viewed: Set<string>;
   completed: Set<string>;
   backOn: Set<string>;
-  otherEvents: Map<string, number>; // non-core event name -> count
-  skippedEvents: Map<string, number>; // events not allowed by the pinned config (never sent)
-  answersByStep: Map<string, AnswerValue>; // final effective answers (for the summary)
+  otherEvents: Map<string, number>;
+  skippedEvents: Map<string, number>;
+  answersByStep: Map<string, AnswerValue>;
   uniqueEvents: number;
-  validSends: number; // every valid event transmission, incl. duplicates and resends
+  validSends: number;
   inBatchDuplicates: number;
   batches: number;
   shuffledBatches: number;
@@ -122,8 +118,8 @@ export interface SessionOutcome {
   invalidSends: number;
   invalidKinds: Map<string, number>;
   backClicks: number;
-  reanswered: number; // re-answers after back that changed the value
-  branchChanges: number; // re-answers that changed the set of visible steps (e.g. hybrid → remote hides office_days)
+  reanswered: number;
+  branchChanges: number;
   stateWrites: number;
   stateConflicts: number;
   httpRetries: number;
@@ -153,7 +149,6 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
   const campaign = rng.weighted(CAMPAIGNS.map((c) => ({ weight: c.weight, value: c })));
   const utm = campaign.utm(rng);
   const override: Variant | undefined = rng.chance(opts.overrideRate) ? rng.pick(['A', 'B'] as const) : undefined;
-  // Session start spread over the last `days` days, leaving room for the session itself.
   let ts = opts.now - 30 * 60_000 - Math.floor(rng.next() * opts.days * 86_400_000);
 
   const out: SessionOutcome = {
@@ -192,7 +187,6 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
     errors: [],
   };
 
-  // --- create session -------------------------------------------------------------------------
   const created = await api.post<SessionResponse>('/api/sessions', {
     slug: opts.slug,
     utm,
@@ -225,13 +219,11 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
   const state: SessionState = { answers: {}, history: [start] };
   let rev = session.rev;
 
-  // --- walk the funnel, collecting events -------------------------------------------------------
   const events: FunnelEventInput[] = [];
-  let seq = 0; // session_started is seq 0 on the server; client events start at 1
+  let seq = 0;
   const emit = (name: string, stepId: string | null, props: Record<string, unknown> = {}) => {
     const allowedProps = funnel.events[name];
     if (!allowedProps) {
-      // The pinned version does not define this event: a real client would not send it either.
       out.skippedEvents.set(name, (out.skippedEvents.get(name) ?? 0) + 1);
       return;
     }
@@ -264,7 +256,6 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
         return true;
       }
       if (res.status === 409) {
-        // Stale rev: last writer wins — adopt the server rev and write our state again.
         out.stateConflicts++;
         rev = (res.body as SessionResponse).session.rev;
         continue;
@@ -276,8 +267,8 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
     return false;
   };
 
-  const answeredOnce = new Set<string>(); // steps answered at least once
-  let afterBack = false; // the current step was reached by a back click
+  const answeredOnce = new Set<string>();
+  let afterBack = false;
 
   if (!rng.chance(opts.dropProb.beforeFirstView)) {
     let backs = 0;
@@ -296,7 +287,6 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
       const canBack = state.history.length > 1 && backs < opts.maxBacks;
 
       if (step.type === 'result') {
-        // Like the web client: the result comes from the server, computed from the saved answers.
         const res = await api.get<ResultResponse>(`/api/sessions/${session.id}/result`);
         out.resultChecks++;
         if (!res.ok || !res.body?.result?.id) {
@@ -319,7 +309,7 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
           emit('cta_clicked', cur, { result_id: result.id, action });
           out.ctaClicked = true;
           out.ctaResult = result.id;
-          out.completed.add(cur); // analytics counts the CTA click as completing the result step
+          out.completed.add(cur);
           emit('recommendation_expanded', cur, { result_id: result.id, action, source: 'cta' });
         }
         break;
@@ -336,7 +326,6 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
       if (isInputStep(step)) {
         const key = answerKey(step)!;
         const prev = state.answers[key];
-        // Re-visits keep the prefilled answer unless the user decides to change it.
         const fresh = !answeredOnce.has(cur) || (afterBack && rng.chance(opts.reanswerProb));
         const value = fresh ? genAnswer(rng, step, numberCuts.get(key) ?? []) : (prev ?? genAnswer(rng, step, []));
         const v = validateAnswer(step, value);
@@ -361,7 +350,6 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
     }
   }
 
-  /** Back = previous visible step for the current answers (normally the previous history entry). */
   async function goBack(cur: string): Promise<boolean> {
     const visible = visibleSteps(funnel, state.answers);
     const i = visible.indexOf(cur);
@@ -376,7 +364,7 @@ export async function simulateSession(api: Api, opts: SimOptions, index: number)
     const h = state.history.lastIndexOf(dest);
     if (h < 0) out.errors.push(`back destination "${dest}" not in history`);
     state.history = h >= 0 ? state.history.slice(0, h + 1) : [...state.history.slice(0, -1), dest];
-    afterBack = true; // answers are kept (prefilled); the user may re-answer differently
+    afterBack = true;
     return putState();
   }
 
@@ -396,13 +384,6 @@ function resolveFinalAnswers(funnel: ResolvedFunnel, answers: SessionState['answ
   return out;
 }
 
-// --- answer generation -------------------------------------------------------------------------
-
-/**
- * Numeric thresholds used by visibleWhen / resultRules, per answer name. Each cut c means "values >= c
- * behave differently", so number answers are drawn bucket by bucket and every numeric branch shows up
- * (e.g. meeting_hours >= 15 → meeting_heavy).
- */
 function collectNumberCuts(config: FunnelConfig): Map<string, number[]> {
   const cuts = new Map<string, number[]>();
   const visit = (c: Condition) => {
@@ -410,7 +391,6 @@ function collectNumberCuts(config: FunnelConfig): Map<string, number[]> {
     if ('any' in c) return c.any.forEach(visit);
     if ('not' in c) return visit(c.not);
     if (!['gt', 'gte', 'lt', 'lte'].includes(c.operator) || typeof c.value !== 'number') return;
-    // gte/lt split at the value itself; gt/lte split just above it.
     const cut = c.operator === 'gte' || c.operator === 'lt' ? c.value : c.value + 1e-9;
     cuts.set(c.answer, [...(cuts.get(c.answer) ?? []), cut]);
   };
@@ -434,10 +414,8 @@ function genAnswer(rng: Rng, step: Step, cuts: number[]): AnswerValue {
       const inc = step.input.step ?? 1;
       const min = step.input.min ?? 0;
       const max = step.input.max ?? min + 100 * inc;
-      const count = Math.floor((max - min) / inc + 1e-9) + 1; // grid: min, min+inc, ... <= max
+      const count = Math.floor((max - min) / inc + 1e-9) + 1;
       const grid = (k: number) => Number((min + k * inc).toFixed(10));
-      // Buckets of grid indices separated by the cuts; the lowest bucket is twice as likely
-      // (most teams are below thresholds such as 15 meeting hours), the others still appear often.
       const bounds = [0];
       for (const c of [...new Set(cuts)].sort((a, b) => a - b)) {
         const k = Math.ceil((c - min) / inc - 1e-9);
@@ -452,8 +430,6 @@ function genAnswer(rng: Rng, step: Step, cuts: number[]): AnswerValue {
       return null;
   }
 }
-
-// --- event delivery ----------------------------------------------------------------------------
 
 function makeInvalid(rng: Rng, base: FunnelEventInput, out: SessionOutcome): WireEvent {
   const e: WireEvent = { ...base, event_id: randomUUID() };
@@ -479,14 +455,12 @@ function makeInvalid(rng: Rng, base: FunnelEventInput, out: SessionOutcome): Wir
       e.seq = String(e.seq);
       break;
     case 'name_not_allowed':
-      // Well-formed, but not in the pinned version's events.allowed → must be rejected.
       e.name = 'debug_ping';
       break;
   }
   return e;
 }
 
-/** Splits events into client-like batches and sends them with duplicates, retries, reordering and junk. */
 async function shipEvents(api: Api, opts: SimOptions, rng: Rng, events: FunnelEventInput[], out: SessionOutcome) {
   const invalid = new WeakSet<WireEvent>();
   const batches: WireEvent[][] = [];
@@ -525,7 +499,7 @@ async function shipEvents(api: Api, opts: SimOptions, rng: Rng, events: FunnelEv
   for (const i of order) {
     await sendBatch(api, payloads[i], invalid, out);
     if (i === resend) {
-      await sendBatch(api, payloads[i], invalid, out); // client timed out and retried the same batch
+      await sendBatch(api, payloads[i], invalid, out);
       out.resentBatches++;
     }
   }

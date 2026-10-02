@@ -1,14 +1,9 @@
-// Funnel config schema (schemaVersion 1.0, as provided with the assignment).
-// The frontend renders screens only from this JSON. Unknown fields are kept (looseObject) so newer
-// configs with extra metadata still validate.
 import { z } from 'zod';
 
 export const VariantSchema = z.enum(['A', 'B']);
 export type Variant = z.infer<typeof VariantSchema>;
 
 export const EventNameRe = /^[a-z][a-z0-9_]{2,47}$/;
-
-// ---- Conditions (visibleWhen, resultRules) ----
 
 export const OPERATORS = ['eq', 'neq', 'in', 'nin', 'contains', 'gt', 'gte', 'lt', 'lte', 'exists'] as const;
 
@@ -29,8 +24,6 @@ export const ConditionSchema: z.ZodType<Condition> = z.lazy(() =>
     z.object({ not: ConditionSchema }),
   ]),
 );
-
-// ---- Steps ----
 
 const ContentSchema = z.looseObject({
   eyebrow: z.string().optional(),
@@ -90,8 +83,6 @@ export type Step = z.infer<typeof StepSchema>;
 export type StepType = Step['type'];
 export type InputStep = Extract<Step, { input: unknown }>;
 
-// ---- Results ----
-
 export const CtaSchema = z.looseObject({ label: z.string(), action: z.string() });
 
 export const ResultSchema = z.looseObject({
@@ -103,12 +94,9 @@ export const ResultSchema = z.looseObject({
 });
 export type Result = z.infer<typeof ResultSchema>;
 
-// ---- Experiment ----
-
 export const VariantDefSchema = z.looseObject({
   weight: z.number().min(0),
   stepSequence: z.array(z.string()).min(1),
-  // Deep-merged into the step / result (e.g. { content: { title } }, { cta: { label } }).
   stepOverrides: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
   resultOverrides: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
 });
@@ -166,11 +154,10 @@ export const FunnelConfigSchema = z.looseObject({
 export type FunnelConfig = z.infer<typeof FunnelConfigSchema>;
 export type FunnelConfigInput = z.input<typeof FunnelConfigSchema>;
 
-// Answer values as stored in session state, keyed by input.name.
 export type AnswerValue = string | string[] | number | null;
 export type Answers = Record<string, AnswerValue>;
 
 export interface SessionState {
   answers: Answers;
-  history: string[]; // visited step stack; last = current step
+  history: string[];
 }

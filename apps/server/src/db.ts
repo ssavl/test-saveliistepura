@@ -1,9 +1,7 @@
-// SQLite via the built-in node:sqlite module (no native build step).
 import { DatabaseSync } from 'node:sqlite';
 
 export type Db = DatabaseSync;
 
-// Append-only list: each entry runs once, tracked in schema_migrations. Never edit an applied entry.
 const MIGRATIONS: string[] = [
   `
   CREATE TABLE funnel_versions (
@@ -57,7 +55,6 @@ const MIGRATIONS: string[] = [
   CREATE INDEX events_session ON events (session_id, seq);
   CREATE INDEX events_slug_name ON events (slug, name, step_id);
   `,
-  // v2: official config format (experiment id, session TTL, flat UTM fields).
   `
   ALTER TABLE sessions ADD COLUMN experiment_id TEXT NOT NULL DEFAULT '';
   ALTER TABLE sessions ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0;

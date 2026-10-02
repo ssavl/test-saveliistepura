@@ -96,9 +96,16 @@ apps/server/src/
   analytics.ts    расчёт метрик
   traffic.ts, traffic/   генератор трафика
 apps/web/src/
-  app/            маршруты Expo Router: /, /f/[slug]/[step], /admin, /dashboard
-  funnel/         FunnelContext (владелец сессии) и StepView (рендер шагов)
-  lib/            api-клиент, storage, трекер событий
+  theme/          дизайн-токены: цвета и тона, типографика, радиусы, отступы
+  components/     atomic design
+    atoms/        AppText, Button, Card, Badge, Stack, TextField, ProgressBar, Spinner, SelectionMark, TextLink
+    molecules/    OptionCard, StepHeading, NumberField, StatusView, Notice, SegmentedControl, KpiTile, …
+    organisms/    DataTable<T>, шаги воронки (steps/), аналитика (analytics/), админка (admin/)
+    templates/    PageTemplate, FunnelTemplate
+  hooks/          логика страниц: useAnswerSubmit, useStepResult, useAnalytics, useFunnelAdmin
+  context/        FunnelContext — владелец сессии воронки
+  app/            маршруты Expo Router (тонкие страницы): /, /f/[slug]/[step], /admin, /dashboard
+  lib/            api-клиент, storage, трекер событий, форматирование
 configs/          funnel-v1.json, funnel-v2.json, funnel-v3.json (не редактируются)
 ```
 

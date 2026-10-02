@@ -1,5 +1,3 @@
-// Funnel analytics. Every metric counts DISTINCT sessions, so duplicates, repeated views and back-navigation
-// never inflate numbers; ordering uses the client `seq`, never arrival order.
 import {
   type AnalyticsResponse,
   CORE_EVENTS,
@@ -14,10 +12,9 @@ import { getFunnel } from './versions';
 export interface AnalyticsFilters {
   version?: number;
   variant?: Variant;
-  utm_campaign?: string; // '(none)' selects sessions without a campaign
+  utm_campaign?: string;
 }
 
-// Evidence that a session saw / finished a step, independent of which events got lost or reordered.
 const SEEN = `name IN ('step_viewed','answer_submitted','step_completed','result_viewed','cta_clicked')`;
 const DONE = `name IN ('step_completed','cta_clicked')`;
 const REACHED_RESULT = `name IN ('result_viewed','cta_clicked')`;
@@ -60,7 +57,6 @@ export function computeAnalytics(db: Db, slug: string, filters: AnalyticsFilters
             COUNT(DISTINCT CASE WHEN name = 'back_clicked' THEN session_id END) AS back
      FROM ev WHERE step_id IS NOT NULL GROUP BY step_id`,
   );
-  // Drop-off step = the last step seen (highest client seq) by sessions that never reached the result.
   const dropRows = all<{ step_id: string | null; n: number }>(
     `, last AS (
         SELECT session_id, step_id,
@@ -102,7 +98,6 @@ export function computeAnalytics(db: Db, slug: string, filters: AnalyticsFilters
   const a = byVariant.find((g) => g.key === 'A');
   const b = byVariant.find((g) => g.key === 'B');
 
-  // Which result the session saw comes from result_viewed / cta_clicked properties (result_id).
   const byResult = all<{ key: string; seen: number; cta: number }>(
     `SELECT json_extract(props_json, '$.result_id') AS key,
             COUNT(DISTINCT session_id) AS seen,
@@ -143,7 +138,6 @@ export function computeAnalytics(db: Db, slug: string, filters: AnalyticsFilters
   };
 }
 
-/** Display order: union of the variants' stepSequences in scope (newest version first), result last. */
 function stepOrder(db: Db, slug: string, versions: number[], variant?: Variant) {
   const order: string[] = [];
   const types = new Map<string, string>();
@@ -155,7 +149,6 @@ function stepOrder(db: Db, slug: string, versions: number[], variant?: Variant) 
       for (const id of funnel.sequence) {
         types.set(id, funnel.steps[id].type);
         if (!order.includes(id)) {
-          // Insert right after this sequence's predecessor so new/branch steps sit next to their context.
           const at = prev === null ? 0 : order.indexOf(prev) + 1;
           order.splice(at, 0, id);
         }
@@ -193,7 +186,6 @@ function groupMetrics(key: string, started: number, result: number, cta: number)
   };
 }
 
-/** Two-proportion z-test on the primary metric (cta / started), B vs A. */
 function abTest(a?: GroupMetrics, b?: GroupMetrics): AnalyticsResponse['abTest'] {
   if (!a || !b || !a.started || !b.started) return { pValue: null, liftAbs: null, liftRel: null };
   const pa = a.ctaClicked / a.started;
@@ -205,7 +197,6 @@ function abTest(a?: GroupMetrics, b?: GroupMetrics): AnalyticsResponse['abTest']
 }
 
 function normalCdf(x: number): number {
-  // Abramowitz–Stegun 7.1.26 approximation of erf.
   const t = 1 / (1 + 0.3275911 * (x / Math.SQRT2));
   const poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
   const erf = 1 - poly * Math.exp(-(x * x) / 2);

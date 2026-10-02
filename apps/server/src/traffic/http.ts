@@ -1,5 +1,3 @@
-// Minimal JSON HTTP client for the traffic generator (global fetch, no deps).
-
 export class NetworkError extends Error {}
 
 export interface HttpResponse<T = unknown> {
@@ -38,7 +36,6 @@ export class Api {
     try {
       parsed = text ? JSON.parse(text) : null;
     } catch {
-      // keep raw text
     }
     return { status: res.status, ok: res.ok, body: parsed as T };
   }

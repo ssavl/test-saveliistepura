@@ -63,7 +63,7 @@ describe('A/B assignment', () => {
     const { api, start } = setup();
     const s = await start();
     const res = await api('PUT', `/api/sessions/${s.session.id}/state`, {
-      state: { answers: {}, history: ['intro', 'meeting_hours'] }, // meeting_hours only exists from v2
+      state: { answers: {}, history: ['intro', 'meeting_hours'] },
       rev: 0,
     });
     expect(res.status).toBe(400);

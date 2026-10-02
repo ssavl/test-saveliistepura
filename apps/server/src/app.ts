@@ -20,7 +20,7 @@ import { funnelAdmin, getVersionConfig, HttpError, listFunnels, publishVersion, 
 export interface AppOptions {
   db: Db;
   configsDir?: string;
-  webDir?: string; // exported Expo web build, served with SPA fallback
+  webDir?: string;
   adminToken?: string;
   logger?: boolean;
 }
@@ -28,7 +28,6 @@ export interface AppOptions {
 export function buildApp({ db, configsDir, webDir, adminToken, logger = false }: AppOptions) {
   const app = Fastify({ logger, bodyLimit: 1024 * 1024 });
 
-  // Browsers send sendBeacon payloads as text/plain unless a Blob type is set; accept both.
   app.addContentTypeParser('text/plain', { parseAs: 'string' }, (_req, body, done) => {
     try {
       done(null, JSON.parse(body as string));
@@ -37,7 +36,6 @@ export function buildApp({ db, configsDir, webDir, adminToken, logger = false }:
     }
   });
 
-  // Permissive CORS for the Expo dev server (production is same-origin).
   app.addHook('onRequest', async (req, reply) => {
     reply.header('access-control-allow-origin', '*');
     reply.header('access-control-allow-headers', 'content-type, x-admin-token');
@@ -62,7 +60,6 @@ export function buildApp({ db, configsDir, webDir, adminToken, logger = false }:
 
   app.get('/api/health', async () => ({ ok: true }));
 
-  // --- Funnel runtime ---
   app.post('/api/sessions', async (req) => createOrResumeSession(db, CreateSessionBody.parse(req.body)));
   app.get<{ Params: { id: string } }>('/api/sessions/:id', async (req) => getSession(db, req.params.id));
   app.get<{ Params: { id: string } }>('/api/sessions/:id/result', async (req) => getResult(db, req.params.id));
@@ -71,7 +68,6 @@ export function buildApp({ db, configsDir, webDir, adminToken, logger = false }:
   );
   app.post('/api/events', async (req) => ingestEvents(db, (req.body as { events?: unknown } | null)?.events));
 
-  // --- Admin ---
   app.register(async (admin) => {
     admin.addHook('onRequest', requireAdmin);
     admin.get('/api/admin/funnels', async () => listFunnels(db));
@@ -109,7 +105,6 @@ export function buildApp({ db, configsDir, webDir, adminToken, logger = false }:
     });
   });
 
-  // --- Analytics ---
   app.get('/api/analytics', async (req) => {
     const q = z
       .object({
@@ -122,7 +117,6 @@ export function buildApp({ db, configsDir, webDir, adminToken, logger = false }:
     return computeAnalytics(db, q.slug, { version: q.version, variant: q.variant, utm_campaign: q.utm_campaign });
   });
 
-  // --- Web app (SPA) ---
   if (webDir && existsSync(join(webDir, 'index.html'))) {
     app.register(fastifyStatic, { root: webDir });
     app.setNotFoundHandler((req, reply) => {

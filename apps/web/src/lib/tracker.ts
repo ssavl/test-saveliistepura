@@ -1,4 +1,3 @@
-// Client event tracker: persistent queue, batched flush, beacon on page hide.
 import type { FunnelEventInput, IngestResult, SessionDto } from '@funnel/shared';
 import { Platform } from 'react-native';
 
@@ -16,7 +15,6 @@ type TrackedEvent = FunnelEventInput & { event_id: string };
 type TrackerSession = Pick<SessionDto, 'id' | 'slug' | 'version' | 'experimentId' | 'variant' | 'utm'>;
 
 let session: TrackerSession | null = null;
-// Pinned config's events.allowed: event name -> allowed property names.
 let allowed: Record<string, string[]> = {};
 let inFlight: Promise<void> | null = null;
 let started = false;
@@ -36,7 +34,6 @@ export function uuid(): string {
 const readQueue = () => storage.getJSON<TrackedEvent[]>(QUEUE_KEY, []);
 const writeQueue = (q: TrackedEvent[]) => storage.setJSON(QUEUE_KEY, q.slice(-MAX_QUEUE));
 
-// Client seq starts at 1 (the server records session_started as seq 0).
 function nextSeq(sessionId: string): number {
   const cur = Number(storage.get(seqKey(sessionId)) ?? '0');
   const next = (Number.isFinite(cur) ? cur : 0) + 1;
@@ -52,7 +49,6 @@ export function setTrackerSession(s: TrackerSession | null, events: Record<strin
 
 export const isEventAllowed = (name: string) => Object.hasOwn(allowed, name);
 
-/** Queues an event if the pinned config allows it; properties outside the allowlist are dropped. */
 export function track(name: string, stepId: string | null, props: Record<string, unknown> = {}) {
   if (!session) return;
   const allowedProps = allowed[name];
@@ -82,10 +78,8 @@ export function track(name: string, stepId: string | null, props: Record<string,
   if (q.length >= FLUSH_THRESHOLD) void flushNow();
 }
 
-/** Sends queued events (one flush at a time); resolves when the queue is drained or a request fails. */
 export function flushNow(): Promise<void> {
   if (inFlight) return inFlight.then(() => (readQueue().length ? flushNow() : undefined));
-  // `.finally` runs asynchronously, so inFlight is cleared only after it has been assigned.
   inFlight = drain().finally(() => {
     inFlight = null;
   });
@@ -107,7 +101,6 @@ async function drain(): Promise<void> {
       }
     } catch (e) {
       const status = (e as { status?: number }).status ?? 0;
-      // Malformed batch as a whole: drop it rather than retry forever. Network / 5xx / 429: keep.
       if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
         done = new Set(batch.map((ev) => ev.event_id));
       } else {
@@ -119,7 +112,6 @@ async function drain(): Promise<void> {
   }
 }
 
-// Best effort on page hide. Events stay queued: if the beacon got through, the next flush is deduped server-side.
 function beacon() {
   if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') return;
   const batch = readQueue().slice(0, BATCH_SIZE);

@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 
-import { FunnelProvider } from '@/funnel/FunnelContext';
+import { FunnelProvider } from '@/context/FunnelContext';
 
 export default function FunnelLayout() {
   const { slug } = useLocalSearchParams<{ slug: string }>();

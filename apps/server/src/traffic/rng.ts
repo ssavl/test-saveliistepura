@@ -1,7 +1,4 @@
-// Small deterministic PRNG for the traffic generator (mulberry32).
-
 export type Rng = {
-  /** Uniform float in [0, 1). */
   next(): number;
   chance(p: number): boolean;
   int(min: number, maxInclusive: number): number;
@@ -46,7 +43,6 @@ export function mulberry32(seed: number): Rng {
   return rng;
 }
 
-/** Derives an independent per-session seed so results don't depend on concurrency/scheduling. */
 export function deriveSeed(seed: number, index: number): number {
   let h = (seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0;
   h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;

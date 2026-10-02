@@ -69,7 +69,6 @@ describe('sequence and branching', () => {
 describe('progress', () => {
   const A = applyVariant(v1, 'A');
   it('counts visible interactive steps only', () => {
-    // remote: team_size, work_mode, priorities, timezone_span, async_maturity, tool_count
     expect(progress(A, { work_mode: 'remote' }, 'intro')).toMatchObject({ index: 0, total: 6, ratio: 0 });
     expect(progress(A, { work_mode: 'remote' }, 'priorities')).toMatchObject({ index: 3, total: 6 });
     expect(progress(A, { work_mode: 'hybrid' }, 'priorities')).toMatchObject({ index: 3, total: 7 });
@@ -121,7 +120,6 @@ describe('result rules', () => {
   it('v3 compliance and v2 meeting-heavy results', () => {
     const A3 = applyVariant(v3, 'A');
     expect(resolveResult(A3, { priorities: ['compliance'], security_constraints: 'strict' }).id).toBe('regulated_scale');
-    // security_constraints is ignored when its step is hidden (compliance deselected).
     expect(resolveResult(A3, { priorities: ['speed'], security_constraints: 'strict', meeting_hours: 20 }).id).toBe('meeting_heavy');
     const A2 = applyVariant(FunnelConfigSchema.parse(raw2), 'A');
     expect(resolveResult(A2, { meeting_hours: 15, work_mode: 'office' }).id).toBe('meeting_heavy');
@@ -134,7 +132,6 @@ describe('config validation', () => {
     bad.experiment.variants.A.stepSequence.push('nope');
     expect(validateConfig(bad).issues.some((i) => i.level === 'error')).toBe(true);
     const order = structuredClone(raw1);
-    // office_days depends on work_mode, which would come later.
     order.experiment.variants.A.stepSequence = ['intro', 'office_days', 'work_mode', 'result'];
     expect(validateConfig(order).issues.some((i) => i.message.includes('not asked earlier'))).toBe(true);
     const res = structuredClone(raw1);

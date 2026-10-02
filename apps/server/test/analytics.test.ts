@@ -16,7 +16,6 @@ async function scenario() {
   const s4 = await start({ variantOverride: 'B' });
   const s5 = await start({ variantOverride: 'B', utm: { utm_campaign: 'c2' } });
 
-  // S1: back-click from priorities to work_mode (repeated views), reaches result, clicks CTA.
   const e1 = flow(s1, [
     ...pass('intro'), ...pass('team_size'), ...pass('work_mode'), ['step_viewed', 'priorities'],
     ['back_clicked', 'priorities'], ['step_viewed', 'work_mode'], ['step_completed', 'work_mode'],
@@ -24,22 +23,20 @@ async function scenario() {
     ['step_viewed', 'result'], ['result_viewed', 'result', { result_id: 'async_native' }],
     ['cta_clicked', 'result', { result_id: 'async_native', action: 'expand_recommendation' }],
   ]);
-  // S2: drops at team_size. S3: variant B order, reaches result, no CTA. S4: no client events at all.
   const e2 = flow(s2, [...pass('intro'), ['step_viewed', 'team_size']]);
   const e3 = flow(s3, [
     ...pass('intro'), ...pass('work_mode'), ...pass('timezone_span'), ...pass('team_size'),
     ...pass('async_maturity'), ...pass('priorities'), ...pass('tool_count'), ['step_viewed', 'result'],
     ['result_viewed', 'result', { result_id: 'balanced' }],
   ]);
-  // S5: drops at timezone_span; its events arrive out of order.
   const e5 = flow(s5, [...pass('intro'), ...pass('work_mode'), ['step_viewed', 'timezone_span']]);
 
   const reversed = (xs: FunnelEventInput[]) => [...xs].reverse();
   await api('POST', '/api/events', { events: reversed(e1) });
-  await api('POST', '/api/events', { events: [...e1.slice(0, 5), ...e2, e2[0]] }); // duplicates
+  await api('POST', '/api/events', { events: [...e1.slice(0, 5), ...e2, e2[0]] });
   await api('POST', '/api/events', { events: e3 });
-  await api('POST', '/api/events', { events: e3 }); // retried batch
-  await api('POST', '/api/events', { events: [e5[4]] }); // latest event first
+  await api('POST', '/api/events', { events: e3 });
+  await api('POST', '/api/events', { events: [e5[4]] });
   await api('POST', '/api/events', { events: reversed(e5.slice(0, 4)) });
   return ctx;
 }
@@ -63,7 +60,6 @@ describe('analytics', () => {
     expect(step(r, 'timezone_span')).toMatchObject({ viewed: 3, completed: 2, dropped: 1 });
     expect(step(r, 'result')).toMatchObject({ viewed: 2, completed: 1, type: 'result' });
 
-    // Every started session is either at a result or dropped exactly once.
     const dropped = r.steps.reduce((acc, s) => acc + s.dropped, 0) + r.totals.droppedBeforeFirstStep;
     expect(dropped + r.totals.resultViewed).toBe(r.totals.started);
     expect(r.steps.at(-1)!.stepId).toBe('result');

@@ -1,93 +1,82 @@
-import type { AnswerValue } from '@funnel/shared';
-import { progress } from '@funnel/shared';
+import { type AnswerValue, progress } from '@funnel/shared';
 import { router, useFocusEffect, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { colors } from '@/components/theme';
-import { ErrorState, Loading, ProgressBar, Screen } from '@/components/ui';
-import { stepHref, useFunnel } from '@/funnel/FunnelContext';
-import { StepView } from '@/funnel/StepView';
+import { ProgressBar } from '@/components/atoms';
+import { StatusView, StepTopBar } from '@/components/molecules';
+import { StepRenderer } from '@/components/organisms';
+import { FunnelTemplate } from '@/components/templates';
+import { stepHref, useFunnel } from '@/context/FunnelContext';
 
 export default function StepScreen() {
   const { step: stepParam } = useLocalSearchParams<{ step: string }>();
-  const f = useFunnel();
+  const funnel = useFunnel();
   const navigation = useNavigation();
-  const ready = f.status.kind === 'ready';
+  const ready = funnel.status.kind === 'ready';
 
-  // Only the focused screen reconciles URL vs. history (the Stack keeps earlier screens mounted).
   useFocusEffect(
     useCallback(() => {
       if (!ready) return;
-      const d = f.getData();
-      if (!d) return;
-      const idx = d.history.indexOf(stepParam);
-      if (idx < 0 || !d.funnel.steps[stepParam]) {
-        const current = f.ensureStarted();
-        router.replace(stepHref(f.slug, current));
+      const data = funnel.getData();
+      if (!data) return;
+      const idx = data.history.indexOf(stepParam);
+      if (idx < 0 || !data.funnel.steps[stepParam]) {
+        router.replace(stepHref(funnel.slug, funnel.ensureStarted()));
         return;
       }
-      if (idx < d.history.length - 1) f.browserBack(stepParam);
-      f.markViewed(stepParam);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      if (idx < data.history.length - 1) funnel.browserBack(stepParam);
+      funnel.markViewed(stepParam);
     }, [ready, stepParam]),
   );
 
-  if (f.status.kind === 'error') return <ErrorState message={f.status.message} onRetry={f.retry} />;
-  const d = f.data;
-  const step = d?.funnel.steps[stepParam];
-  if (!ready || !d || !step || !d.history.includes(stepParam)) return <Loading />;
+  if (funnel.status.kind === 'error') {
+    return (
+      <StatusView
+        fullScreen
+        kind="error"
+        title="Something went wrong"
+        message={funnel.status.message}
+        actionLabel="Try again"
+        onAction={funnel.retry}
+      />
+    );
+  }
+  const data = funnel.data;
+  const step = data?.funnel.steps[stepParam];
+  if (!ready || !data || !step || !data.history.includes(stepParam)) {
+    return <StatusView fullScreen kind="loading" message="Loading…" />;
+  }
 
-  const pos = d.history.indexOf(stepParam);
-  const p = progress(d.funnel, d.answers, stepParam);
+  const position = data.history.indexOf(stepParam);
+  const isResult = step.type === 'result';
+  const p = progress(data.funnel, data.answers, stepParam);
+  const label = p.counted
+    ? `Question ${p.index} of ${p.total}`
+    : isResult
+      ? 'YOUR PERSONAL PLAN'
+      : 'LET’S FIND YOUR RHYTHM';
 
   const goBack = () => {
-    const to = f.backFrom(stepParam);
+    const to = funnel.backFrom(stepParam);
     if (!to) return;
     const state = navigation.getState();
     const prev = state && state.index > 0 ? state.routes[state.index - 1] : undefined;
-    if (prev && (prev.params as { step?: string } | undefined)?.step === to) navigation.goBack();
-    else router.replace(stepHref(f.slug, to));
+    if ((prev?.params as { step?: string } | undefined)?.step === to) navigation.goBack();
+    else router.replace(stepHref(funnel.slug, to));
   };
 
-  const onSubmit = (value: AnswerValue | undefined) => {
-    const res = f.submit(stepParam, value);
+  const submit = (value: AnswerValue | undefined) => {
+    const res = funnel.submit(stepParam, value);
     if (res.error) return res.error;
-    if (res.next) router.push(stepHref(f.slug, res.next));
+    if (res.next) router.push(stepHref(funnel.slug, res.next));
     return undefined;
   };
 
   return (
-    <Screen>
-      <View style={s.header}>
-        {pos > 0 ? (
-          <Pressable accessibilityRole="button" onPress={goBack} hitSlop={10} style={s.back}>
-            <Text style={s.backText}>‹ Back</Text>
-          </Pressable>
-        ) : (
-          <View style={s.back} />
-        )}
-        {p.counted ? (
-          <Text style={s.counter}>
-            Question {p.index} of {p.total}
-          </Text>
-        ) : null}
-      </View>
-      <ProgressBar ratio={p.ratio} />
-      <View style={{ height: 12 }} />
-      <StepView
-        key={`${stepParam}:${pos}`}
-        step={step}
-        answers={d.answers}
-        onSubmit={onSubmit}
-      />
-    </Screen>
+    <FunnelTemplate title={data.config.title} complete={isResult}>
+      <StepTopBar label={label} onBack={position > 0 ? goBack : undefined} />
+      {p.counted || isResult ? <ProgressBar ratio={isResult ? 1 : p.ratio} /> : null}
+      <StepRenderer key={`${stepParam}:${position}`} step={step} answers={data.answers} onSubmit={submit} />
+    </FunnelTemplate>
   );
 }
-
-const s = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 32 },
-  back: { minWidth: 80, paddingVertical: 4 },
-  backText: { color: colors.accent, fontSize: 16, fontWeight: '500' },
-  counter: { color: colors.muted, fontSize: 14, fontVariant: ['tabular-nums'] },
-});

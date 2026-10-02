@@ -6,13 +6,12 @@ describe('publish & rollback', () => {
     const { api, publish, rollback } = setup();
     const pub = await publish(loadConfig(2));
     expect(pub.status).toBe(200);
-    expect(pub.body.version).toBe(2); // version number comes from the file
+    expect(pub.body.version).toBe(2);
     expect((await api('GET', '/api/admin/funnels/workstyle-planner')).body.activeVersion).toBe(2);
 
     const rb = await rollback();
     expect(rb.body.activeVersion).toBe(1);
     expect(rb.body.log[0]).toMatchObject({ action: 'rollback', fromVersion: 2, toVersion: 1 });
-    // Versions are never deleted: v2 can be re-activated.
     expect(rb.body.versions.map((v: { version: number }) => v.version)).toEqual([2, 1]);
     expect(rb.body.versions[0]).toMatchObject({ status: 'draft', releaseNote: expect.stringContaining('meeting') });
     expect((await rollback(2)).body.activeVersion).toBe(2);
@@ -57,7 +56,6 @@ describe('version pinning', () => {
     expect(fresh.session.version).toBe(2);
     expect(fresh.config.steps.intro.content.title).toBe('NEW');
 
-    // After rollback, v2 sessions still continue on v2, new ones start on v1.
     await rollback();
     expect((await start({ sessionId: fresh.session.id })).session.version).toBe(2);
     expect((await start()).session.version).toBe(1);

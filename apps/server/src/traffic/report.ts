@@ -1,4 +1,3 @@
-// Local "intended" summary and before/after analytics delta comparison.
 import type { AnalyticsResponse, GroupMetrics, StepMetrics } from '@funnel/shared';
 import type { SessionOutcome } from './simulate';
 
@@ -23,7 +22,7 @@ export interface Expected {
   byVariant: Map<string, Counts>;
   byCampaign: Map<string, Counts>;
   byVersion: Map<string, Counts>;
-  byResult: Map<string, Counts>; // started = sessions that saw this result
+  byResult: Map<string, Counts>;
   steps: Map<string, StepCounts>;
   other: Map<string, { sessions: number; events: number }>;
 }
@@ -86,7 +85,6 @@ export function table(rows: (string | number)[][], header?: string[]): string {
   return lines.map((l) => '  ' + l.trimEnd()).join('\n');
 }
 
-
 const groupRows = (m: Map<string, Counts>, sort: (a: [string, Counts], b: [string, Counts]) => number) =>
   [...m.entries()].sort(sort).map(([k, c]) => [
     k, c.started, c.resultViewed, c.ctaClicked, pct(c.resultViewed, c.started), pct(c.ctaClicked, c.resultViewed), pct(c.ctaClicked, c.started),
@@ -126,7 +124,6 @@ export function printLocalSummary(outcomes: SessionOutcome[], exp: Expected) {
   ));
   console.log(`  dropped before the first step: ${exp.droppedBeforeFirstStep}`);
 
-  // Branch coverage over final (effective) answers of sessions that reached the result.
   const finished = created.filter((o) => o.reachedResult);
   const count = (f: (o: SessionOutcome) => boolean) => finished.filter(f).length;
   const ans = (o: SessionOutcome, k: string) => o.answersByStep.get(k);
@@ -191,8 +188,6 @@ export function printLocalSummary(outcomes: SessionOutcome[], exp: Expected) {
   return ingestRows.filter(([, a, e]) => a !== e).map(([k, a, e]) => `ingest ${k}: server ${a}, expected ${e}`);
 }
 
-// --- analytics delta ---------------------------------------------------------------------------
-
 type Delta = Map<string, Counts>;
 
 function groupDelta(before: GroupMetrics[] | undefined, after: GroupMetrics[] | undefined): Delta {
@@ -220,7 +215,6 @@ export function compareAnalytics(before: AnalyticsResponse | null, after: Analyt
   const cmp = (section: string, key: string, e: Counts, s: Counts | undefined) => {
     for (const m of ['started', 'resultViewed', 'ctaClicked'] as const) check(section, key, m, e[m], s?.[m] ?? 0);
   };
-  /** Compares every expected key, plus any server key that changed although nothing was expected. */
   const cmpGroups = (section: string, e: Map<string, Counts>, d: Delta) => {
     for (const [k, c] of [...e.entries()].sort(byKey)) cmp(section, k, c, d.get(k));
     for (const [k, c] of d) if (!e.has(k) && (c.started || c.resultViewed || c.ctaClicked)) cmp(section, k, zero(), c);
@@ -239,13 +233,11 @@ export function compareAnalytics(before: AnalyticsResponse | null, after: Analyt
   if (!after.byResult) mismatches.push('analytics response has no byResult');
   cmpGroups('result', exp.byResult, groupDelta(before?.byResult, after.byResult));
 
-  // Campaigns: sessions without utm_campaign are grouped under NO_CAMPAIGN (api.ts).
   cmpGroups('campaign', exp.byCampaign, groupDelta(before?.byCampaign, after.byCampaign));
 
   console.log('\n== Analytics check: generator expectation vs server (delta before→after) ==');
   console.log(table(rows, ['group', 'key', 'metric', 'expected', 'server', '']));
 
-  // Steps: viewed/completed/back/dropped per step id (unique sessions).
   const bSteps = new Map<string, StepMetrics>((before?.steps ?? []).map((s) => [s.stepId, s]));
   const stepRows: (string | number)[][] = [];
   const stepIds = new Set([...exp.steps.keys(), ...after.steps.map((s) => s.stepId)]);
@@ -267,7 +259,6 @@ export function compareAnalytics(before: AnalyticsResponse | null, after: Analyt
   console.log('\nSteps (expected/server delta):');
   console.log(table(stepRows, ['step', 'viewed', 'completed', 'back', 'dropped', '']));
 
-  // Config-defined (non-core) events, e.g. recommendation_expanded on v3.
   const bOther = new Map((before?.otherEvents ?? []).map((o) => [o.name, o]));
   const names = new Set([...exp.other.keys(), ...(after.otherEvents ?? []).map((o) => o.name)]);
   const otherRows: (string | number)[][] = [];

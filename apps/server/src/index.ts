@@ -14,7 +14,6 @@ const SEED_CONFIG = process.env.SEED_CONFIG ?? resolve(CONFIGS_DIR, 'funnel-v1.j
 mkdirSync(dirname(DB_PATH), { recursive: true });
 const db = openDb(DB_PATH);
 
-// First boot: publish the seed config so the funnel works out of the box.
 const seed = JSON.parse(readFileSync(SEED_CONFIG, 'utf8'));
 if (getActiveVersion(db, seed.funnelId) === null) {
   const { version } = publishVersion(db, seed.funnelId, seed, 'seed');

@@ -1,12 +1,9 @@
-// Event envelope: config `events.baseProperties` + `seq` (client ordering) + `properties`.
-// Which event names and which properties are accepted is decided per pinned config version (events.allowed).
 import { z } from 'zod';
 import { EventNameRe, VariantSchema } from './config';
 import { CORE_EVENT_NAMES } from './engine';
 
 export const CORE_EVENTS = CORE_EVENT_NAMES;
 
-// Events that must reference a step of the session's funnel.
 export const STEP_EVENTS: ReadonlySet<string> = new Set([
   'step_viewed',
   'answer_submitted',
@@ -23,9 +20,7 @@ export const EventSchema = z.object({
   session_id: z.uuid(),
   name: z.string().regex(EventNameRe),
   client_timestamp: z.number().int().positive(),
-  // Per-session monotonic counter from the client: orders events regardless of arrival order.
   seq: z.number().int().min(0),
-  // The following are overwritten by the server from the stored session (the client is not trusted).
   funnel_id: z.string().max(64),
   funnel_version: z.number().int().positive(),
   experiment_id: z.string().max(128),

@@ -1,4 +1,3 @@
-// Funnel session owner: creates/resumes the server session, keeps answers + history, persists state.
 import {
   type AnswerValue,
   type Answers,
@@ -40,17 +39,11 @@ type Status = { kind: 'loading' } | { kind: 'error'; message: string } | { kind:
 interface FunnelActions {
   retry(): void;
   getData(): FunnelData | null;
-  /** Makes sure history is non-empty; returns the current step id. */
   ensureStarted(): string;
-  /** Browser back / popped screen: truncate history to `stepId`. */
   browserBack(stepId: string): void;
-  /** In-app back button. Returns the step to show, or null. */
   backFrom(stepId: string): string | null;
-  /** Emits step_viewed for the current step. */
   markViewed(stepId: string): void;
-  /** Validates, records the answer, advances history. Returns next step id, or null if not applicable. */
   submit(stepId: string, value: AnswerValue | undefined): { next: string | null; error?: string };
-  /** Resolves when the state writer is idle: true if the latest state reached the server. */
   awaitPersist(): Promise<boolean>;
 }
 
@@ -83,7 +76,6 @@ function loadErrorMessage(e: unknown): string {
 
 export function FunnelProvider({ slug, children }: { slug: string; children: ReactNode }) {
   const globalParams = useGlobalSearchParams();
-  // Landing query (utm_*, variant, reset) is captured once: step URLs don't carry it.
   const [landing] = useState(() => readLandingParams(globalParams));
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
   const [data, setData] = useState<FunnelData | null>(null);
@@ -114,7 +106,6 @@ export function FunnelProvider({ slug, children }: { slug: string; children: Rea
     [commit, slug],
   );
 
-  // Serialized state writer: at most one PUT in flight, always sends the latest state.
   const persist = useCallback(async () => {
     const w = writer.current;
     w.dirty = true;
@@ -136,7 +127,6 @@ export function FunnelProvider({ slug, children }: { slug: string; children: Rea
           commit({ rev: res.rev });
         } catch (e) {
           if (e instanceof ApiError && e.status === 409 && e.body && typeof e.body === 'object' && 'session' in e.body) {
-            // Another tab won: the server state is now the source of truth.
             adopt(e.body as SessionResponse);
             w.dirty = false;
           } else if (!(e instanceof ApiError) || e.status === 0 || e.status >= 500) {
@@ -166,15 +156,12 @@ export function FunnelProvider({ slug, children }: { slug: string; children: Rea
         resetDone.current = true;
         storage.remove(sidKey(slug));
       }
-      // The override param name is config.experiment.overrideQueryParam, but the config is only known after
-      // this request, so the landing URL's `variant` (the default name, used by all provided configs) is read.
       const variantOverride: Variant | undefined =
         landing.variant === 'A' || landing.variant === 'B' ? landing.variant : undefined;
       const res = await api<SessionResponse>('/api/sessions', {
         body: { slug, sessionId: storage.get(sidKey(slug)) ?? undefined, utm: pickUtm(landing), variantOverride },
       });
       storage.set(sidKey(slug), res.session.id);
-      // Parse to apply schema defaults in case the server returns the config as authored.
       const config = FunnelConfigSchema.parse(res.config);
       const funnel = applyVariant(config, res.session.variant);
       const history = sanitizeHistory(res.session.state?.history ?? [], funnel, true);
@@ -231,7 +218,6 @@ export function FunnelProvider({ slug, children }: { slug: string; children: Rea
       },
       markViewed(stepId) {
         const d = dataRef.current!;
-        // Guards against a double focus callback for the same view.
         const key = `${d.session.id}|${d.history.length}|${stepId}`;
         const now = Date.now();
         if (lastView.current.key === key && now - lastView.current.at < 500) return;
@@ -246,7 +232,6 @@ export function FunnelProvider({ slug, children }: { slug: string; children: Rea
       submit(stepId, value) {
         const d = dataRef.current!;
         const step = d.funnel.steps[stepId];
-        // Ignore stale submits (double tap, screen no longer current).
         if (!step || d.history[d.history.length - 1] !== stepId) return { next: null };
         const v = validateAnswer(step, value);
         if (!v.ok) return { next: null, error: v.error };
@@ -268,7 +253,6 @@ export function FunnelProvider({ slug, children }: { slug: string; children: Rea
           const w = writer.current;
           if (!w.writing && !w.dirty && !w.retry) return resolve(true);
           w.waiters.push(resolve);
-          // A failed write waiting for its retry timer is retried right away.
           if (!w.writing) void persist();
         });
       },
@@ -283,7 +267,6 @@ export function FunnelProvider({ slug, children }: { slug: string; children: Rea
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-/** Drops steps unknown to this funnel version; a fresh session starts empty (index route pushes the first step). */
 function sanitizeHistory(history: string[], funnel: ResolvedFunnel, allowEmpty = false): string[] {
   const clean = (history ?? []).filter((id) => funnel.steps[id]);
   if (!clean.length && !allowEmpty) return [firstStep(funnel, {})];

@@ -11,7 +11,6 @@ describe('event ingestion', () => {
     expect(first.body.accepted).toEqual([e1.event_id, e2.event_id]);
     expect(first.body.duplicates).toEqual([e1.event_id]);
 
-    // Retry after a timeout: the same batch again is a no-op.
     const retry = await api('POST', '/api/events', { events: [e1, e2] });
     expect(retry.body.accepted).toEqual([]);
     expect(retry.body.duplicates).toHaveLength(2);
@@ -31,8 +30,8 @@ describe('event ingestion', () => {
         makeEvent(s, 'step_viewed', null, 2),
         makeEvent(s, 'session_started', null, 3),
         { ...makeEvent(s, 'step_viewed', 'intro', 4), session_id: '11111111-1111-4111-8111-111111111111' },
-        makeEvent(s, 'step_viewed', 'meeting_hours', 5), // not in v1
-        makeEvent(s, 'recommendation_expanded', 'result', 6), // not allowed in v1
+        makeEvent(s, 'step_viewed', 'meeting_hours', 5),
+        makeEvent(s, 'recommendation_expanded', 'result', 6),
         good,
       ],
     });

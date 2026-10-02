@@ -1,19 +1,31 @@
 import { router } from 'expo-router';
 import { useEffect, useRef } from 'react';
 
-import { ErrorState, Loading } from '@/components/ui';
-import { stepHref, useFunnel } from '@/funnel/FunnelContext';
+import { StatusView } from '@/components/molecules';
+import { stepHref, useFunnel } from '@/context/FunnelContext';
 
-// Entry point: forwards to the session's current step (or the start step for a fresh session).
 export default function FunnelIndex() {
-  const f = useFunnel();
-  const ready = f.status.kind === 'ready';
+  const funnel = useFunnel();
+  const ready = funnel.status.kind === 'ready';
   const done = useRef(false);
+
   useEffect(() => {
     if (!ready || done.current) return;
     done.current = true;
-    router.replace(stepHref(f.slug, f.ensureStarted()));
-  }, [ready, f]);
-  if (f.status.kind === 'error') return <ErrorState message={f.status.message} onRetry={f.retry} />;
-  return <Loading />;
+    router.replace(stepHref(funnel.slug, funnel.ensureStarted()));
+  }, [ready, funnel]);
+
+  if (funnel.status.kind === 'error') {
+    return (
+      <StatusView
+        fullScreen
+        kind="error"
+        title="Something went wrong"
+        message={funnel.status.message}
+        actionLabel="Try again"
+        onAction={funnel.retry}
+      />
+    );
+  }
+  return <StatusView fullScreen kind="loading" message="Loading…" />;
 }

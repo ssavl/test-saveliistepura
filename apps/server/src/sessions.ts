@@ -1,4 +1,3 @@
-// Sessions pin a funnel version and an A/B variant at creation; both never change afterwards.
 import { randomUUID } from 'node:crypto';
 import {
   type FunnelConfig,
@@ -13,7 +12,6 @@ import { z } from 'zod';
 import { type Db, tx } from './db';
 import { getActiveVersion, getFunnel, getVersionConfig, HttpError } from './versions';
 
-/** FNV-1a -> [0, 1). Deterministic per (session, experiment), so assignment is reproducible. */
 export function hashUnit(input: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
@@ -23,7 +21,6 @@ export function hashUnit(input: string): number {
   return (h >>> 0) / 2 ** 32;
 }
 
-/** Weighted, deterministic per (session, experiment.id): the same session always lands in the same variant. */
 export function assignVariant(sessionId: string, config: FunnelConfig): Variant {
   const { A, B } = config.experiment.variants;
   return hashUnit(`${sessionId}:${config.experiment.id}`) < B.weight / (A.weight + B.weight) ? 'B' : 'A';
@@ -63,7 +60,6 @@ export function loadSession(db: Db, id: string): SessionDto | null {
 }
 
 function withConfig(db: Db, session: SessionDto, resumed: boolean): SessionResponse {
-  // Always the pinned version: publishing or rolling back never affects existing sessions.
   const config = getVersionConfig(db, session.slug, session.version);
   if (!config) throw new HttpError(500, `Pinned version ${session.version} is missing`);
   return { session, config, resumed };
@@ -79,7 +75,6 @@ export const CreateSessionBody = z.object({
 export function createOrResumeSession(db: Db, body: z.infer<typeof CreateSessionBody>): SessionResponse {
   if (body.sessionId) {
     const existing = loadSession(db, body.sessionId);
-    // An expired session (session.ttlHours of inactivity) or a conflicting override starts a new session.
     if (
       existing &&
       existing.slug === body.slug &&
@@ -114,7 +109,6 @@ export function createOrResumeSession(db: Db, body: z.infer<typeof CreateSession
       now,
       now + ttlMs(config),
     );
-    // session_started is recorded server-side (seq 0) so it exists exactly once per session.
     db.prepare(
       `INSERT INTO events (event_id, session_id, slug, name, step_id, funnel_version, experiment_id, variant,
                            utm_source, utm_medium, utm_campaign, utm_json, props_json, client_ts, seq, server_ts)
@@ -163,7 +157,6 @@ export function updateState(db: Db, id: string, body: z.infer<typeof UpdateState
     if (unknown) throw new HttpError(400, `Step "${unknown}" is not part of version ${s.version}/${s.variant}`);
     const rev = s.rev + 1;
     const now = Date.now();
-    // TTL slides with activity; answers are kept only if the config allows persisting them.
     const state = config.session.persistAnswers ? body.state : { ...body.state, answers: {} };
     db.prepare('UPDATE sessions SET state_json = ?, rev = ?, updated_at = ?, expires_at = ? WHERE id = ?').run(
       JSON.stringify(state),
@@ -176,7 +169,6 @@ export function updateState(db: Db, id: string, body: z.infer<typeof UpdateState
   });
 }
 
-/** Result from the stored answers, using the session's pinned version and variant. */
 export function getResult(db: Db, id: string): ResultResponse {
   const s = loadSession(db, id);
   if (!s) throw new HttpError(404, 'Session not found');

@@ -1,6 +1,5 @@
 import { Platform } from 'react-native';
 
-// localStorage on web, in-memory fallback elsewhere (or when storage is blocked).
 const memory = new Map<string, string>();
 
 function ls(): Storage | null {

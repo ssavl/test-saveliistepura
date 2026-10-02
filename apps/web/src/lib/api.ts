@@ -20,7 +20,6 @@ interface RequestOptions {
   admin?: boolean;
 }
 
-/** JSON request helper. Throws ApiError for non-2xx (status 0 = network error/timeout). */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (opts.body !== undefined) headers['content-type'] = 'application/json';

@@ -1,6 +1,3 @@
-// Pure funnel engine shared by client, server and the traffic generator.
-// Model: each variant has a linear stepSequence; a step with `visibleWhen` is shown only when its condition
-// holds for answers given earlier in that sequence (this is the branching mechanism).
 import {
   type AnswerValue,
   type Answers,
@@ -23,18 +20,17 @@ export interface ResolvedFunnel {
   variant: Variant;
   locale: string;
   sequence: string[];
-  steps: Record<string, Step>; // only steps of this variant's sequence, overrides applied
-  results: Record<string, Result>; // overrides applied
+  steps: Record<string, Step>;
+  results: Record<string, Result>;
   resultRules: FunnelConfig['resultRules'];
   defaultResultId: string;
   progressExclude: string[];
-  events: Record<string, string[]>; // allowed event name -> allowed property names
+  events: Record<string, string[]>;
 }
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** Objects merge recursively; arrays and scalars are replaced. */
 export function deepMerge<T>(base: T, patch: unknown): T {
   if (!isObj(base) || !isObj(patch)) return (patch === undefined ? base : patch) as T;
   const out: Obj = { ...base };
@@ -106,7 +102,6 @@ function evalLeaf(c: LeafCondition, answers: Answers): boolean {
   }
 }
 
-/** Missing answers make leaf conditions false (except `exists: false`). */
 export function evalCondition(cond: Condition, answers: Answers): boolean {
   if ('all' in cond) return cond.all.every((c) => evalCondition(c, answers));
   if ('any' in cond) return cond.any.some((c) => evalCondition(c, answers));
@@ -114,11 +109,6 @@ export function evalCondition(cond: Condition, answers: Answers): boolean {
   return evalLeaf(cond, answers);
 }
 
-/**
- * Walks the sequence and returns the visible steps plus the answers that still count.
- * Answers of steps hidden by a later change (e.g. office_days after switching to remote) are dropped,
- * so stale answers never affect visibility or the result.
- */
 export function walk(funnel: ResolvedFunnel, answers: Answers): { visible: string[]; effective: Answers } {
   const effective: Answers = {};
   const visible: string[] = [];
@@ -138,23 +128,17 @@ export function firstStep(funnel: ResolvedFunnel, answers: Answers = {}): string
   return visibleSteps(funnel, answers)[0];
 }
 
-/** Next visible step after `stepId` in the sequence, or null at the end. */
 export function nextStep(funnel: ResolvedFunnel, stepId: string, answers: Answers): string | null {
   const visible = visibleSteps(funnel, answers);
   const pos = funnel.sequence.indexOf(stepId);
   return visible.find((id) => funnel.sequence.indexOf(id) > pos) ?? null;
 }
 
-/** Position of the step in the visible sequence (all types), 1-based — used for step_viewed. */
 export function stepPosition(funnel: ResolvedFunnel, stepId: string, answers: Answers) {
   const visible = visibleSteps(funnel, answers);
   return { index: visible.indexOf(stepId) + 1, count: visible.length };
 }
 
-/**
- * Progress bar: only visible steps, excluding `progress.excludeTypes` (info/result).
- * `index` is the 1-based number of the current question (0 on info screens before the first question).
- */
 export function progress(funnel: ResolvedFunnel, answers: Answers, stepId: string) {
   const visible = visibleSteps(funnel, answers);
   const counted = visible.filter((id) => !funnel.progressExclude.includes(funnel.steps[id].type));
@@ -203,10 +187,8 @@ export function validateAnswer(step: Step, value: AnswerValue | undefined): Vali
   }
 }
 
-/** answer_submitted carries the kind of answer only — raw answers stay in the session (privacy.storeRawAnswers=false). */
 export const answerKind = (step: Step): string => step.type;
 
-/** First matching result rule over effective answers, else defaultResultId. */
 export function resolveResult(funnel: ResolvedFunnel, answers: Answers): Result {
   const { effective } = walk(funnel, answers);
   const rule = funnel.resultRules.find((r) => evalCondition(r.when, effective));
@@ -237,7 +219,6 @@ export const CORE_EVENT_NAMES = [
   'cta_clicked',
 ];
 
-/** Schema + semantic checks for both variants. Publishing is blocked on errors. */
 export function validateConfig(raw: unknown): { config?: FunnelConfig; issues: ConfigIssue[] } {
   const parsed = FunnelConfigSchema.safeParse(raw);
   if (!parsed.success) {
@@ -273,7 +254,7 @@ export function validateConfig(raw: unknown): { config?: FunnelConfig; issues: C
   for (const variant of ['A', 'B'] as const) {
     const def = config.experiment.variants[variant];
     const seen = new Set<string>();
-    const names = new Map<string, number>(); // answer name -> position in sequence
+    const names = new Map<string, number>();
     def.stepSequence.forEach((id, pos) => {
       const step = config.steps[id];
       if (!step) return err(`Unknown step "${id}" in stepSequence`, variant);

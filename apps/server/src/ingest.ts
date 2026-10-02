@@ -1,6 +1,3 @@
-// Batch event ingestion: idempotent by event_id, per-item validation, one transaction per batch.
-// What is accepted is decided by the session's pinned config: `events.allowed` lists event names and
-// their properties; anything else is rejected (unknown name) or stripped (unknown property).
 import { EventSchema, type IngestResult, MAX_BATCH, STEP_EVENTS } from '@funnel/shared';
 import { type Db, tx } from './db';
 import { loadSession } from './sessions';
@@ -50,7 +47,6 @@ export function ingestEvents(db: Db, events: unknown): IngestResult {
       const propsJson = JSON.stringify(props);
       if (propsJson.length > MAX_PROPS_JSON) return reject('properties too large');
 
-      // Funnel, version, experiment, variant and UTM are session facts: the stored session is the source of truth.
       const { utm } = session;
       const { changes } = insert.run(
         e.event_id,

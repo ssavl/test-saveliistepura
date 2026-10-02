@@ -42,16 +42,25 @@ apps/server/src/
 apps/server/test/           vitest: versions, sessions, events, analytics, iteration2 (+ helpers.ts)
 
 apps/web/src/               Expo SDK 57 + Expo Router, основной таргет — web (react-native-web)
-  app/index.tsx             редирект на /f/workstyle-planner с сохранением query
-  app/f/[slug]/_layout.tsx  FunnelProvider + Stack
-  app/f/[slug]/index.tsx    бутстрап: replace на текущий шаг
-  app/f/[slug]/[step].tsx   экран шага: сверка URL с историей на фокусе, Back, прогресс
-  app/admin.tsx             версии: список, JSON, публикация файла/вставки, валидация, откат/активация (RU)
-  app/dashboard.tsx         аналитика с фильтрами (RU)
-  funnel/FunnelContext.tsx  владелец сессии: create/resume, answers/history, сериализованный writer, awaitPersist
-  funnel/StepView.tsx       рендер типов шагов, экран результата (loading/error/CTA/recommendations)
-  lib/tracker.ts            очередь событий в storage, батчи, sendBeacon, allowlist по конфигу
-  lib/api.ts, lib/storage.ts, components/{ui,theme}.ts(x)
+  theme/                    токены: colors (+ Tone/toneColors), typography (TextVariant), radius, space
+  components/               atomic design; уровень импортирует только нижние уровни или свой (organisms → DataTable); у каждого barrel index.ts
+    atoms/                  AppText(variant), Button(variant,size), Card(tone), Badge(tone), Stack, TextField,
+                            ProgressBar, Spinner, SelectionMark, TextLink
+    molecules/              OptionCard, StepHeading, NumberField, FieldMessage, StatusView, Notice, LabeledField,
+                            SegmentedControl<T>, SectionCard, KpiTile, RecommendationItem, StepTopBar, IssueList,
+                            CodeBlock, BrandLogo
+    organisms/              DataTable<T>, FunnelAside,
+                            steps/ (StepRenderer + InfoStep/SingleSelectStep/MultiSelectStep/NumberStep/ResultStep,
+                                    общий тип StepProps<T extends StepType>),
+                            analytics/ (AnalyticsFilters, KpiGrid, StepsTable, AbTestCard, GroupMetricsTable,
+                                        ResultsTable, OtherEventsTable, columns.tsx),
+                            admin/ (AdminTokenForm, FunnelVersionsCard, VersionsTable, VersionLog, PublishForm;
+                                    пропсы — Pick<FunnelAdmin, ...> от типа хука)
+    templates/              PageTemplate (admin/dashboard), FunnelTemplate (каркас воронки)
+  hooks/                    useAnswerSubmit, useStepResult, useAnalytics, useFunnelAdmin — вся логика страниц
+  context/FunnelContext.tsx владелец сессии: create/resume, answers/history, сериализованный writer, awaitPersist
+  app/                      маршруты Expo Router — тонкие страницы: хук + шаблон + организмы
+  lib/                      api, storage, tracker (очередь событий), format (pct, interval, dateTime, ...)
 apps/web/AGENTS.md          правила Expo (читать перед изменениями Expo API)
 
 configs/                    официальные конфиги HR — НЕ РЕДАКТИРОВАТЬ
@@ -164,10 +173,12 @@ Vitest не ловит проблемы ESM-загрузки под `tsx` — о
 - Expo SDK 57: перед использованием Expo API сверяйтесь с `apps/web/AGENTS.md` и docs.expo.dev для v57; зависимости ставьте через `npx expo install`.
 - В zsh переменная с пробелами не разбивается на аргументы: `cmd $FLAGS` передаст одну строку. Пишите флаги явно.
 - `?variant=` читается до загрузки конфига, поэтому имя параметра фиксировано (оно совпадает с `overrideQueryParam` во всех конфигах).
-- Язык интерфейса: воронка — английский (locale конфига `en-AU`), `/admin` и `/dashboard` — русский. README — русский; комментарии в коде — английские и редкие.
+- Язык интерфейса: воронка — английский (locale конфига `en-AU`), `/admin` и `/dashboard` — русский. README — русский.
 
 ## Стиль
 
+- **Комментариев в коде нет**: код должен объяснять себя именами, типами и структурой.
+- **UI — atomic design.** Новый элемент собирается из существующих атомов и молекул. Цвета, шрифты и отступы берутся из `@/theme`; исключение — локальная палитра декоративной иллюстрации (`FunnelAside`, `BrandLogo`). Пропсы каждого компонента описаны экспортируемым `interface XxxProps`. Логика и запросы живут в `hooks/`, страницы в `app/` только собирают шаблон.
 - TypeScript strict. Никаких новых зависимостей без необходимости: только open-source, никаких сторонних сервисов (аналитика, БД и прочее — свои).
 - Пишите код в стиле соседнего: чистые функции в shared, тонкие роуты, SQL с параметрами.
 - Ошибки HTTP бросаются через `HttpError(status, message, body?)`.

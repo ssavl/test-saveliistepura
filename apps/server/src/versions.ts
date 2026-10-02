@@ -1,4 +1,3 @@
-// Funnel versions are immutable rows; publish/rollback only move the `funnel_active` pointer.
 import {
   applyVariant,
   type ConfigIssue,
@@ -25,7 +24,6 @@ export function getActiveVersion(db: Db, slug: string): number | null {
   return row?.version ?? null;
 }
 
-// Parsed configs are immutable per (slug, version), so caching is safe.
 const configCache = new WeakMap<Db, Map<string, FunnelConfig>>();
 
 export function getVersionConfig(db: Db, slug: string, version: number): FunnelConfig | null {
@@ -38,7 +36,6 @@ export function getVersionConfig(db: Db, slug: string, version: number): FunnelC
     | { config_json: string }
     | undefined;
   if (!row) return null;
-  // Stored configs were validated on publish; re-parse applies schema defaults.
   const { config } = validateConfig(JSON.parse(row.config_json));
   if (!config) return null;
   cache.set(key, config);
@@ -47,7 +44,6 @@ export function getVersionConfig(db: Db, slug: string, version: number): FunnelC
 
 const funnelCache = new WeakMap<Db, Map<string, ResolvedFunnel>>();
 
-/** Variant-resolved funnel of a pinned version (cached; versions are immutable). */
 export function getFunnel(db: Db, slug: string, version: number, variant: Variant): ResolvedFunnel | null {
   let cache = funnelCache.get(db);
   if (!cache) funnelCache.set(db, (cache = new Map()));
@@ -76,8 +72,6 @@ export function publishVersion(
       issues: [{ level: 'error', message: `config.funnelId "${config.funnelId}" != "${slug}"` }],
     });
   }
-  // The version number is the one in the file, so events and the file always agree. Versions are immutable:
-  // re-publishing an existing number is refused — use rollback/activate to switch to it.
   const version = config.version;
   return tx(db, () => {
     const now = Date.now();
@@ -99,7 +93,6 @@ export function publishVersion(
   });
 }
 
-/** Activates `toVersion` or, by default, the closest version below the active one. */
 export function rollback(db: Db, slug: string, toVersion?: number): number {
   return tx(db, () => {
     const from = getActiveVersion(db, slug);

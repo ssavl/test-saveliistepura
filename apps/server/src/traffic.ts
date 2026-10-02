@@ -1,5 +1,3 @@
-// Synthetic traffic generator: drives sessions through the REAL HTTP API (see packages/shared/src/api.ts).
-// Usage: npm run traffic -- [--sessions 160] [--base-url http://localhost:3000] [--seed 42] ...
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { AnalyticsResponse, ConfigIssue, FunnelAdminDto } from '@funnel/shared';
@@ -130,12 +128,7 @@ async function fetchAnalytics(api: Api, slug: string): Promise<AnalyticsResponse
   return null;
 }
 
-/**
- * Makes the config in `file` the active version: publish it; on 409 (already published) activate it via
- * rollback unless it is already active.
- */
 async function publish(api: Api, slug: string, file: string, headers?: Record<string, string>) {
-  // Relative paths: try the current directory, then the repo root (npm -w runs in apps/server).
   const candidates = [resolve(file), resolve(import.meta.dirname, '../../..', file)];
   const path = candidates.find((p) => {
     try {
@@ -200,7 +193,6 @@ async function main() {
     days: args.days,
     overrideRate: args.overrideRate,
     ctaProb: { A: args.ctaA, B: args.ctaB },
-    // Plausible abandonment: some bounce on the welcome screen, most friction on the number input.
     dropProb: { beforeFirstView: 0.02, start: 0.1, 'single-select': 0.04, 'multi-select': 0.07, number: 0.1, info: 0.03 },
     backProb: 0.07,
     backFromResultProb: 0.06,
@@ -214,7 +206,6 @@ async function main() {
   console.log(`Traffic → ${args.baseUrl}  slug=${args.slug}  sessions=${args.sessions}  seed=${args.seed}` +
     `  concurrency=${args.concurrency}  cta A/B=${args.ctaA}/${args.ctaB}${args.clean ? '  (clean)' : ''}`);
 
-  // Reachability: any HTTP answer counts; a network error is fatal.
   try {
     const health = await api.get('/api/health');
     if (!health.ok) console.warn(`warning: /api/health → ${describe(health)}`);
