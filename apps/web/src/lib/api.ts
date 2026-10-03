@@ -37,7 +37,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       signal: controller.signal,
     });
-  } catch (e) {
+  } catch {
     throw new ApiError(0, null, controller.signal.aborted ? 'Сервер не ответил вовремя' : 'Нет связи с сервером');
   } finally {
     clearTimeout(timer);

@@ -11,22 +11,23 @@ import { stepHref, useFunnel } from '@/context/FunnelContext';
 export default function StepScreen() {
   const { step: stepParam } = useLocalSearchParams<{ step: string }>();
   const funnel = useFunnel();
+  const { slug, getData, ensureStarted, browserBack, markViewed } = funnel;
   const navigation = useNavigation();
   const ready = funnel.status.kind === 'ready';
 
   useFocusEffect(
     useCallback(() => {
       if (!ready) return;
-      const data = funnel.getData();
+      const data = getData();
       if (!data) return;
       const idx = data.history.indexOf(stepParam);
       if (idx < 0 || !data.funnel.steps[stepParam]) {
-        router.replace(stepHref(funnel.slug, funnel.ensureStarted()));
+        router.replace(stepHref(slug, ensureStarted()));
         return;
       }
-      if (idx < data.history.length - 1) funnel.browserBack(stepParam);
-      funnel.markViewed(stepParam);
-    }, [ready, stepParam]),
+      if (idx < data.history.length - 1) browserBack(stepParam);
+      markViewed(stepParam);
+    }, [ready, stepParam, slug, getData, ensureStarted, browserBack, markViewed]),
   );
 
   if (funnel.status.kind === 'error') {

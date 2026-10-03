@@ -84,7 +84,7 @@ npm run traffic -- --base-url http://localhost:3100 [--sessions 160] [--seed N] 
 Переменные окружения сервера: `PORT`, `DB_PATH` (по умолчанию `apps/server/data/funnel.sqlite`), `CONFIGS_DIR`, `SEED_CONFIG` (по умолчанию `configs/funnel-v1.json`), `WEB_DIR`, `ADMIN_TOKEN` (если задан, `/api/admin/*` требует `x-admin-token`), `LOG=0` (выключить логи Fastify).
 
 Перед тем как объявить задачу готовой, нужно пройти:
-1. `npm test` и `npm run typecheck`;
+1. `npm test`, `npm run typecheck` и `npx expo lint` в `apps/web` (0 ошибок);
 2. `npm run build`;
 3. живой прогон: `npm start` на свободном порту с одноразовой БД, затем `npm run traffic` против него. Генератор должен закончить строкой `OK: server numbers match the generator.`
 

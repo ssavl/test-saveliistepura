@@ -150,7 +150,6 @@ export function FunnelProvider({ slug, children }: { slug: string; children: Rea
   }, [adopt, commit]);
 
   const load = useCallback(async () => {
-    setStatus({ kind: 'loading' });
     try {
       if (landing.reset === '1' && !resetDone.current) {
         resetDone.current = true;
@@ -187,7 +186,10 @@ export function FunnelProvider({ slug, children }: { slug: string; children: Rea
 
   const actions = useMemo<FunnelActions>(
     () => ({
-      retry: () => void load(),
+      retry: () => {
+        setStatus({ kind: 'loading' });
+        void load();
+      },
       getData: () => dataRef.current,
       ensureStarted() {
         const d = dataRef.current!;

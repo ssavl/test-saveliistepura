@@ -1,5 +1,5 @@
 import type { AnalyticsResponse, Variant } from '@funnel/shared';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { api, errorMessage } from '@/lib/api';
 
@@ -25,36 +25,39 @@ function toQuery({ slug, version, variant, campaign }: AnalyticsFilters) {
 export function useAnalytics(filters: AnalyticsFilters, autoRefresh: boolean) {
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [error, setError] = useState<string>();
-  const [loading, setLoading] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
-  const requestId = useRef(0);
+  const [tick, setTick] = useState(0);
+  const [settledKey, setSettledKey] = useState<string | null>(null);
   const query = toQuery(filters);
-
-  const reload = useCallback(async () => {
-    const id = ++requestId.current;
-    setLoading(true);
-    try {
-      const res = await api<AnalyticsResponse>(`/api/analytics?${query}`, { admin: true });
-      if (id !== requestId.current) return;
-      setData(res);
-      setError(undefined);
-      setUpdatedAt(Date.now());
-    } catch (e) {
-      if (id === requestId.current) setError(errorMessage(e));
-    } finally {
-      if (id === requestId.current) setLoading(false);
-    }
-  }, [query]);
+  const requestKey = `${query}#${tick}`;
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    let cancelled = false;
+    api<AnalyticsResponse>(`/api/analytics?${query}`, { admin: true })
+      .then((res) => {
+        if (cancelled) return;
+        setData(res);
+        setError(undefined);
+        setUpdatedAt(Date.now());
+      })
+      .catch((e) => {
+        if (!cancelled) setError(errorMessage(e));
+      })
+      .finally(() => {
+        if (!cancelled) setSettledKey(requestKey);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [query, requestKey]);
+
+  const reload = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const timer = setInterval(() => void reload(), AUTO_REFRESH_MS);
+    const timer = setInterval(reload, AUTO_REFRESH_MS);
     return () => clearInterval(timer);
   }, [autoRefresh, reload]);
 
-  return { data, error, loading, updatedAt, reload };
+  return { data, error, loading: settledKey !== requestKey, updatedAt, reload };
 }

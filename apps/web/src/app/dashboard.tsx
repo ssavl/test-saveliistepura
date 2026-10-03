@@ -53,7 +53,7 @@ export default function DashboardScreen() {
         onApplySlug={applySlug}
         data={data}
         loading={loading}
-        onReload={() => void reload()}
+        onReload={reload}
         autoRefresh={autoRefresh}
         onAutoRefreshChange={setAutoRefresh}
         updatedAt={updatedAt}

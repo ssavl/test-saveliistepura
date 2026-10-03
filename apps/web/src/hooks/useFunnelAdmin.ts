@@ -20,6 +20,14 @@ const enc = encodeURIComponent;
 const hasIssues = (body: unknown): body is { issues: ConfigIssue[] } =>
   !!body && typeof body === 'object' && 'issues' in body;
 
+async function fetchFunnels() {
+  const list = await api<FunnelSummary[]>('/api/admin/funnels', { admin: true });
+  const { files } = await api<{ files: string[] }>('/api/admin/config-files', { admin: true }).catch(() => ({
+    files: [] as string[],
+  }));
+  return { list, files };
+}
+
 export function useFunnelAdmin() {
   const [token, setToken] = useState(() => storage.get(ADMIN_TOKEN_KEY) ?? '');
   const [funnels, setFunnels] = useState<FunnelSummary[]>([]);
@@ -34,27 +42,26 @@ export function useFunnelAdmin() {
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
 
-  const loadFunnels = useCallback(async () => {
-    setError(undefined);
-    try {
-      const list = await api<FunnelSummary[]>('/api/admin/funnels', { admin: true });
-      setFunnels(list);
-      setSlug((cur) => cur || list[0]?.slug || '');
-      const res = await api<{ files: string[] }>('/api/admin/config-files', { admin: true }).catch(() => ({ files: [] }));
-      setFiles(res.files);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }, []);
+  const loadFunnels = useCallback(
+    () =>
+      fetchFunnels()
+        .then(({ list, files: names }) => {
+          setFunnels(list);
+          setSlug((cur) => cur || list[0]?.slug || '');
+          setFiles(names);
+        })
+        .catch((e) => setError(errorMessage(e))),
+    [],
+  );
 
-  const loadFunnel = useCallback(async (target: string) => {
-    if (!target) return;
-    try {
-      setInfo(await api<FunnelAdminDto>(`/api/admin/funnels/${enc(target)}`, { admin: true }));
-    } catch (e) {
-      setInfo(null);
-      setError(errorMessage(e));
-    }
+  const loadFunnel = useCallback((target: string) => {
+    if (!target) return Promise.resolve();
+    return api<FunnelAdminDto>(`/api/admin/funnels/${enc(target)}`, { admin: true })
+      .then(setInfo)
+      .catch((e) => {
+        setInfo(null);
+        setError(errorMessage(e));
+      });
   }, []);
 
   useEffect(() => {
@@ -62,9 +69,13 @@ export function useFunnelAdmin() {
   }, [loadFunnels]);
 
   useEffect(() => {
-    setShown(null);
     void loadFunnel(slug);
   }, [slug, loadFunnel]);
+
+  const selectSlug = (next: string) => {
+    setShown(null);
+    setSlug(next);
+  };
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -81,6 +92,7 @@ export function useFunnelAdmin() {
 
   const saveToken = () => {
     storage.set(ADMIN_TOKEN_KEY, token.trim());
+    setError(undefined);
     void loadFunnels();
   };
 
@@ -149,7 +161,7 @@ export function useFunnelAdmin() {
         setIssues(res.issues ?? []);
         setMessage(`Опубликована версия v${res.version} (${draft.slug})`);
         setNote('');
-        if (draft.slug !== slug) setSlug(draft.slug);
+        if (draft.slug !== slug) selectSlug(draft.slug);
         else void loadFunnel(draft.slug);
         void loadFunnels();
       } catch (e) {
@@ -168,7 +180,7 @@ export function useFunnelAdmin() {
     saveToken,
     funnels,
     slug,
-    setSlug,
+    setSlug: selectSlug,
     info,
     files,
     shown,
