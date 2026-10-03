@@ -9,12 +9,17 @@
     "node": ">=22.13"
   },
   "scripts": {
+    "prestart": "node scripts/preflight.mjs --web",
+    "start": "npm run start -w @funnel/server",
+    "predev:server": "node scripts/preflight.mjs",
     "dev:server": "npm run dev -w @funnel/server",
     "dev:web": "npm run web -w @funnel/web",
     "build": "npm run build -w @funnel/web",
-    "start": "npm run start -w @funnel/server",
+    "pretest": "node scripts/preflight.mjs",
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint -w @funnel/web",
+    "pretraffic": "node scripts/preflight.mjs",
     "traffic": "npm run traffic -w @funnel/server --"
   }
 }

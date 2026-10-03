@@ -5,6 +5,8 @@ import { Api, describe, NetworkError } from './traffic/http';
 import { compareAnalytics, expectedFrom, printLocalSummary } from './traffic/report';
 import { FatalError, type SessionOutcome, type SimOptions, simulateSession } from './traffic/simulate';
 
+const DEFAULT_BASE_URL = 'http://localhost:3000';
+
 const HELP = `Funnel Runtime — synthetic traffic generator
 
 Drives N sessions through the real HTTP API (POST /api/sessions, PUT /api/sessions/:id/state,
@@ -66,7 +68,7 @@ interface Args {
 function parseArgs(argv: string[]): Args {
   const a: Args = {
     sessions: 160,
-    baseUrl: process.env.BASE_URL ?? 'http://localhost:3000',
+    baseUrl: process.env.BASE_URL ?? DEFAULT_BASE_URL,
     slug: 'workstyle-planner',
     adminToken: process.env.ADMIN_TOKEN || undefined,
     seed: Math.floor(Math.random() * 2 ** 31),
@@ -206,11 +208,17 @@ async function main() {
   console.log(`Traffic → ${args.baseUrl}  slug=${args.slug}  sessions=${args.sessions}  seed=${args.seed}` +
     `  concurrency=${args.concurrency}  cta A/B=${args.ctaA}/${args.ctaB}${args.clean ? '  (clean)' : ''}`);
 
+  const startHint =
+    `Start the Funnel Runtime server first ("npm start") and pass its address if it is not ${DEFAULT_BASE_URL}:\n` +
+    `  npm run traffic -- --base-url http://localhost:<port>`;
   try {
-    const health = await api.get('/api/health');
-    if (!health.ok) console.warn(`warning: /api/health → ${describe(health)}`);
+    const health = await api.get<{ ok?: boolean }>('/api/health');
+    if (!health.ok || health.body?.ok !== true) {
+      console.error(`error: ${args.baseUrl} is not a Funnel Runtime server (GET /api/health → HTTP ${health.status}).\n${startHint}`);
+      process.exit(1);
+    }
   } catch (e) {
-    console.error(`error: server unreachable at ${args.baseUrl} (${(e as Error).message})`);
+    console.error(`error: server unreachable at ${args.baseUrl} (${(e as Error).message}).\n${startHint}`);
     process.exit(1);
   }
 

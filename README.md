@@ -12,7 +12,7 @@
 |---|---|
 | **Публичный URL** | https://web-production-eee72.up.railway.app |
 | Воронка | https://web-production-eee72.up.railway.app/ → `/f/workstyle-planner` |
-| Управление версиями | https://web-production-eee72.up.railway.app/admin (нужен `ADMIN_TOKEN`, передаётся отдельно) |
+| Управление версиями | https://web-production-eee72.up.railway.app/admin (открыта без токена — это демо тестового задания) |
 | Аналитика | https://web-production-eee72.up.railway.app/dashboard |
 | **Репозиторий** | https://github.com/ssavl/test-saveliistepura |
 
@@ -47,15 +47,41 @@
 
 ## Быстрый старт
 
-Нужен Node.js ≥ 22.13 (используется 24).
+Нужны только **Node.js 22.13 или новее** (рекомендуется 24) и npm, который идёт вместе с Node. Базу данных ставить и настраивать не нужно: SQLite встроен в Node, файл базы создаётся сам при первом запуске.
 
 ```bash
+git clone https://github.com/ssavl/test-saveliistepura.git
+cd test-saveliistepura
 npm install
-npm test                 # 40 тестов: движок + сервер
-npm run build            # web-экспорт в apps/web/dist
-npm start                # http://localhost:3000 — API + web; при первом старте публикуется funnel-v1.json
-npm run traffic          # 160 синтетических сессий → откройте http://localhost:3000/dashboard
+npm start
 ```
+
+`npm start` при первом запуске сам собирает web-клиент (около 20 секунд), создаёт базу `apps/server/data/funnel.sqlite`, применяет миграции, публикует `funnel-v1.json` и печатает адреса:
+
+```
+Funnel Runtime is running
+  Funnel      http://localhost:3000/
+  Admin       http://localhost:3000/admin
+  Dashboard   http://localhost:3000/dashboard
+```
+
+Во втором терминале можно наполнить dashboard данными и прогнать тесты:
+
+```bash
+npm run traffic          # 160 синтетических сессий → http://localhost:3000/dashboard
+npm test                 # 40 тестов: движок + сервер
+```
+
+Если что-то пошло не так:
+
+| Симптом | Что делать |
+|---|---|
+| `npm install` падает с `EBADENGINE` | Node старше 22.13. Поставьте Node 24: https://nodejs.org или `nvm install 24` (в репозитории есть `.nvmrc`) |
+| `Port 3000 is already in use` | Запустите на другом порту: `PORT=3100 npm start` (PowerShell: `$env:PORT=3100; npm start`), генератор — `npm run traffic -- --base-url http://localhost:3100` |
+| Нужно начать с чистой базы | Остановите сервер и удалите файлы `apps/server/data/funnel.sqlite*` |
+| Изменили код web-клиента | `npm run build` (сервер подхватит новую сборку без перезапуска) |
+
+Запуск проверен с нуля на чистом клоне: macOS, Node 24 и Node 22.13, а также в Docker (`node:24-slim`, Linux).
 
 Прогнать всю историю версий на одном сервере:
 
@@ -119,7 +145,8 @@ configs/          funnel-v1.json, funnel-v2.json, funnel-v3.json (не реда�
 
 | Команда | Что делает |
 |---|---|
-| `npm start` | сервер (`tsx apps/server/src/index.ts`) + раздача `apps/web/dist` |
+| `npm start` | сервер (`tsx apps/server/src/index.ts`) + раздача `apps/web/dist`; если web-клиент не собран — сначала собирает его |
+| `npm run lint` | ESLint web-клиента |
 | `npm run build` | `expo export --platform web` → `apps/web/dist` |
 | `npm test` | vitest в `packages/shared` и `apps/server` |
 | `npm run typecheck` | `tsc --noEmit` во всех пакетах |
@@ -138,8 +165,8 @@ configs/          funnel-v1.json, funnel-v2.json, funnel-v3.json (не реда�
 | `CONFIGS_DIR` | `configs` | папка с JSON-конфигами (для админки и сида) |
 | `SEED_CONFIG` | `configs/funnel-v1.json` | что публиковать при первом старте с пустой БД |
 | `WEB_DIR` | `apps/web/dist` | собранный web-клиент |
-| `ADMIN_TOKEN` | — | если задан, `/api/admin/*` требует заголовок `x-admin-token` |
-| `LOG` | — | `0` выключает логи запросов |
+| `ADMIN_TOKEN` | — | необязательная защита админки: если задан, `/api/admin/*` требует заголовок `x-admin-token`, а на странице `/admin` появляется поле для токена. По умолчанию и на демо-стенде не задан |
+| `LOG` | — | `1` включает JSON-логи запросов |
 
 Клиентская переменная: `EXPO_PUBLIC_API_URL`, базовый URL API для dev-режима. В продакшене пусто, то есть тот же origin.
 
@@ -790,11 +817,11 @@ docker build -t funnel . && docker run -p 3000:3000 -v funnel-data:/data funnel
 
 ```bash
 railway init --name funnel-runtime
-railway add --service web --variables "ADMIN_TOKEN=…" --variables "DB_PATH=/data/workstyle.sqlite" --variables "PORT=3000"
+railway add --service web --variables "DB_PATH=/data/workstyle.sqlite" --variables "PORT=3000"
 railway link -s web && railway volume add --mount-path /data
 railway up --ci                      # сборка и деплой из локальной папки
 railway domain --port 3000           # публичный домен
-npm run traffic -- --base-url https://<domain> --admin-token …   # наполнить dashboard
+npm run traffic -- --base-url https://<domain>   # наполнить dashboard
 ```
 
 - Выкладка идёт командой `railway up` из локальной папки, автодеплоя из GitHub нет.
@@ -810,7 +837,7 @@ npm run traffic -- --base-url https://<domain> --admin-token …   # напол�
 - **`status: draft`** в файлах v2 и v3 — информационное поле: публикует администратор.
 - **Отвал** включает и незавершённые сессии: отдельного тайм-аута для аналитики нет.
 - **Версии одной воронки:** активна одна версия, в версии один эксперимент.
-- **Доступ к админке** защищён только `ADMIN_TOKEN`, без пользователей и ролей.
+- **Доступ к админке** открыт: это демо тестового задания. Для реального стенда есть необязательная защита токеном (`ADMIN_TOKEN`), пользователей и ролей нет.
 - **Аналитика** считается SQL-запросами на лету, без предагрегации. Для тестового объёма этого достаточно, для миллионов событий понадобились бы материализованные агрегаты.
 - **Масштабирование:** SQLite — один файл на одном диске, поэтому сервис нельзя запустить в нескольких экземплярах.
 - **Нативные платформы** (iOS, Android) не проверялись: код кроссплатформенный, но целевая платформа — web.

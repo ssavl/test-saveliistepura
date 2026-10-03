@@ -17,6 +17,8 @@ export interface ShownVersion {
 const DEFAULT_SLUG = 'workstyle-planner';
 const enc = encodeURIComponent;
 
+const isUnauthorized = (e: unknown) => e instanceof ApiError && e.status === 401;
+
 const hasIssues = (body: unknown): body is { issues: ConfigIssue[] } =>
   !!body && typeof body === 'object' && 'issues' in body;
 
@@ -41,6 +43,12 @@ export function useFunnelAdmin() {
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [authRequired, setAuthRequired] = useState(() => !!storage.get(ADMIN_TOKEN_KEY));
+
+  const fail = useCallback((e: unknown) => {
+    if (isUnauthorized(e)) setAuthRequired(true);
+    setError(errorMessage(e));
+  }, []);
 
   const loadFunnels = useCallback(
     () =>
@@ -50,8 +58,8 @@ export function useFunnelAdmin() {
           setSlug((cur) => cur || list[0]?.slug || '');
           setFiles(names);
         })
-        .catch((e) => setError(errorMessage(e))),
-    [],
+        .catch(fail),
+    [fail],
   );
 
   const loadFunnel = useCallback((target: string) => {
@@ -60,9 +68,9 @@ export function useFunnelAdmin() {
       .then(setInfo)
       .catch((e) => {
         setInfo(null);
-        setError(errorMessage(e));
+        fail(e);
       });
-  }, []);
+  }, [fail]);
 
   useEffect(() => {
     void loadFunnels();
@@ -84,7 +92,7 @@ export function useFunnelAdmin() {
     try {
       await fn();
     } catch (e) {
-      setError(errorMessage(e));
+      fail(e);
     } finally {
       setBusy(false);
     }
@@ -178,6 +186,7 @@ export function useFunnelAdmin() {
     token,
     setToken,
     saveToken,
+    authRequired,
     funnels,
     slug,
     setSlug: selectSlug,

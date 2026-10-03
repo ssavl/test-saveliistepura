@@ -14,7 +14,9 @@ export default function AdminScreen() {
 
   return (
     <PageTemplate title="Версии воронок" links={links} loading={admin.busy}>
-      <AdminTokenForm token={admin.token} setToken={admin.setToken} saveToken={admin.saveToken} />
+      {admin.authRequired ? (
+        <AdminTokenForm token={admin.token} setToken={admin.setToken} saveToken={admin.saveToken} />
+      ) : null}
       {admin.error ? <Notice tone="danger" message={admin.error} /> : null}
       {admin.message ? <Notice tone="success" message={admin.message} /> : null}
       <FunnelVersionsCard {...admin} />

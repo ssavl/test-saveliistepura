@@ -74,14 +74,14 @@ npm install
 npm test                    # vitest во всех workspaces (shared + server)
 npm run typecheck           # tsc --noEmit во всех workspaces
 npm run build               # expo export → apps/web/dist (сервер раздаёт его)
-npm start                   # сервер + web; PORT по умолчанию 3000
+npm start                   # сервер + web; PORT по умолчанию 3000; сам собирает web, если dist отсутствует
 npm run dev:server          # tsx watch
 EXPO_PUBLIC_API_URL=http://localhost:3100 npm run dev:web   # Expo dev server на :8081, API через CORS
 npm run traffic -- --base-url http://localhost:3100 [--sessions 160] [--seed N] \
   [--publish configs/funnel-v2.json] [--admin-token T] [--clean] [--no-verify] [--help]
 ```
 
-Переменные окружения сервера: `PORT`, `DB_PATH` (по умолчанию `apps/server/data/funnel.sqlite`), `CONFIGS_DIR`, `SEED_CONFIG` (по умолчанию `configs/funnel-v1.json`), `WEB_DIR`, `ADMIN_TOKEN` (если задан, `/api/admin/*` требует `x-admin-token`), `LOG=0` (выключить логи Fastify).
+Переменные окружения сервера: `PORT`, `DB_PATH` (по умолчанию `apps/server/data/funnel.sqlite`), `CONFIGS_DIR`, `SEED_CONFIG` (по умолчанию `configs/funnel-v1.json`), `WEB_DIR`, `ADMIN_TOKEN` (если задан, `/api/admin/*` требует `x-admin-token`), `LOG=1` (включить JSON-логи Fastify).
 
 Перед тем как объявить задачу готовой, нужно пройти:
 1. `npm test`, `npm run typecheck` и `npx expo lint` в `apps/web` (0 ошибок);
@@ -159,12 +159,14 @@ Vitest не ловит проблемы ESM-загрузки под `tsx` — о
 ## Деплой (Railway)
 
 - Сборка из `Dockerfile` через `railway up --ci -s web`. Деплой идёт с локальной папки (с учётом `.gitignore`); **автодеплоя из GitHub нет**.
-- Переменные сервиса: `PORT=3000` (обязательно — домен смотрит на 3000), `DB_PATH=/data/workstyle.sqlite`, `ADMIN_TOKEN` (секрет, только в Railway, в репозиторий не писать), `LOG=0`.
+- Переменные сервиса: `PORT=3000` (обязательно — домен смотрит на 3000), `DB_PATH=/data/workstyle.sqlite`, `LOG=0`. `ADMIN_TOKEN` на проде не задан: админка открыта намеренно (демо тестового задания).
 - Volume примонтирован в `/data`. Там же лежит старая несовместимая БД `funnel.sqlite` от первой версии формата — не используется.
-- Проверка после деплоя: `curl $URL/api/health`, затем `npm run traffic -- --base-url $URL --admin-token $T`.
+- Проверка после деплоя: `curl $URL/api/health`, затем `npm run traffic -- --base-url $URL`.
 - Состояние прода: v1, v2 и v3 опубликованы, на каждой по 160 синтетических сессий; после проверки v3 сделан откат, **активна v2**.
 
 ## Подводные камни
+
+- Первый запуск должен работать с одной команды: `scripts/preflight.mjs` (хуки `prestart`, `pretest`, `pretraffic`) проверяет версию Node и зависимости и собирает web при отсутствии `dist`. `.npmrc` с `engine-strict` останавливает `npm install` на старом Node. Меняя запуск, перепроверяйте на чистом клоне.
 
 - `packages/shared/package.json` обязан иметь `"type": "module"`: без него `tsx` грузит shared как CJS, и сервер падает на именованных импортах. Vitest это скрывает.
 - Локально порт 3000 занят посторонним приложением — используйте 3100 и выше.
